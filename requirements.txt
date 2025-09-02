@@ -1,6 +1,7 @@
-shiny>=1.4.0
-anthropic
-python-dotenv
-pypdf
-scikit-learn
-joblib
+shiny==1.4.0
+anthropic==0.64.0
+python-dotenv==1.1.1
+pypdf==4.3.1
+scikit-learn==1.5.2
+joblib==1.4.2
+
