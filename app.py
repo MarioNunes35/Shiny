@@ -1,4 +1,4 @@
-# app.py — Chat UI + Light/Dark + PDF RAG cache (TF‑IDF)
+# app.py — Chat UI + Light/Dark + PDF RAG cache (TF-IDF) — fixed for Shiny 1.4 (await send_custom_message)
 from shiny import App, ui, render, reactive
 from dotenv import load_dotenv
 import os, traceback, re, json, hashlib
@@ -34,6 +34,8 @@ except Exception:
     TfidfVectorizer = None
     cosine_similarity = None
     dump = load = None
+
+print("RAG deps disponíveis?", HAVE_RAG_DEPS)
 
 # -------- RAG cache paths --------
 DATA_DIR = Path("data")
@@ -155,9 +157,7 @@ def chat_reply_with_context(history, model):
 
     system = (
         "Você é o Origin Software Assistant. Use o CONTEXTO quando ele estiver presente; "
-        "se a resposta não estiver no contexto, diga claramente que o documento não contém a informação.
-
-"
+        "se a resposta não estiver no contexto, diga claramente que o documento não contém a informação.\n\n"
         f"=== CONTEXTO ===\n{ctx}\n=== FIM DO CONTEXTO ==="
     )
     resp = client.messages.create(
@@ -243,7 +243,7 @@ app_ui = ui.page_fluid(
     ),
     ui.div({"class":"kb"},
         ui.card(
-            ui.card_header("📚 Base de conhecimento (PDF → índice TF‑IDF)"),
+            ui.card_header("📚 Base de conhecimento (PDF → índice TF-IDF)"),
             ui.input_file("docs", "Adicionar PDF(s)", multiple=True, accept=[".pdf"]),
             ui.output_text("kb_status")
         )
@@ -329,11 +329,13 @@ def server(input, output, session):
         history.set([])
         ui.update_text_area("prompt", value="")
 
+    # Apply theme when selection changes (Shiny 1.4: await coroutine)
     @reactive.Effect
-    def _theme_apply():
+    async def _theme_apply():
         theme = input.theme() or "dark"
-        session.send_custom_message("set_theme", theme)
+        await session.send_custom_message("set_theme", theme)
 
+    # Key handler + autoscroll
     ui.tags.script("""
         document.addEventListener('keydown', (e)=>{
           if(e.target.id==='prompt' && e.key==='Enter' && !e.shiftKey){
@@ -341,7 +343,6 @@ def server(input, output, session):
             document.getElementById('send').click();
           }
         });
-        // autoscroll
         new MutationObserver(()=>{
           const el=document.querySelector('.chat-container');
           if(el) el.scrollTop = el.scrollHeight;
