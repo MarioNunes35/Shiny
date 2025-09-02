@@ -1,22 +1,19 @@
-# app.py
+# app.py (fixed)
 from shiny import App, ui, render, reactive
 from dotenv import load_dotenv
 import os
-import sys
 import traceback
 
-# --- Load secrets from .env (works locally and on shinyapps.io if .env is bundled) ---
+# Load .env (useful local; Connect Cloud can set env vars via Settings → Environment)
 load_dotenv()
 API_KEY = os.getenv("ANTHROPIC_API_KEY")
 HAS_KEY = bool(API_KEY)
 
-# Lazily import anthropic so the app runs even if the package isn't available yet
 try:
     from anthropic import Anthropic
-except Exception:  # pragma: no cover
+except Exception:
     Anthropic = None
 
-# --- Create client only if we have the key and the package ---
 client = None
 if HAS_KEY and Anthropic is not None:
     try:
@@ -24,11 +21,10 @@ if HAS_KEY and Anthropic is not None:
     except Exception:
         client = None
 
-# ------------------------- UI -------------------------
 app_ui = ui.page_fluid(
     ui.panel_title("🚀 Origin Software Assistant"),
     ui.p("Assistant para dúvidas de software e ciência de dados. "
-         "Defina a variável de ambiente ANTHROPIC_API_KEY para habilitar o Claude."),
+         "Defina ANTHROPIC_API_KEY para habilitar o Claude."),
     ui.input_text("question", "Sua pergunta:", placeholder="Como plotar um gráfico de pizza no OriginPro?"),
     ui.input_text_area("context", "Contexto (opcional):", rows=4,
                        placeholder="Ex.: versão do Origin, dados, objetivo..."),
@@ -41,11 +37,8 @@ app_ui = ui.page_fluid(
         ui.card_header("Resposta"),
         ui.output_text_verbatim("answer"),
     ),
-    ui.hr(),
-    ui.p("Dica: para uso local, crie um arquivo .env com ANTHROPIC_API_KEY=..."),
 )
 
-# ----------------------- Helpers ----------------------
 def make_prompt(question: str, context: str) -> str:
     context_block = f"\n\nContexto:\n{context}" if context else ""
     return (
@@ -59,7 +52,6 @@ def ask_claude(question: str, context: str) -> str:
         return "Configuração necessária: defina ANTHROPIC_API_KEY e instale o pacote 'anthropic'."
     try:
         prompt = make_prompt(question, context)
-        # Modelo econômico por padrão; ajuste conforme sua conta
         resp = client.messages.create(
             model="claude-3-haiku-20240307",
             max_tokens=800,
@@ -70,19 +62,22 @@ def ask_claude(question: str, context: str) -> str:
             ),
             messages=[{"role": "user", "content": [{"type": "text", "text": prompt}]}],
         )
-        # Extrai o texto da resposta
-        content = getattr(resp, "content", None)
-        if isinstance(content, list) and content and "text" in content[0].__dict__:
-            return content[0].text
-        # fallback genérico
-        return str(resp)
-    except Exception as e:  # pragma: no cover
+        # Extrai os blocos de texto
+        parts = []
+        try:
+            for block in getattr(resp, "content", []):
+                if getattr(block, "type", None) == "text":
+                    parts.append(block.text)
+        except Exception:
+            parts = [str(resp)]
+        return "\n".join(parts) if parts else str(resp)
+    except Exception as e:
         traceback.print_exc()
         return f"Erro ao consultar o Claude: {e}"
 
-# ----------------------- Server -----------------------
 def server(input, output, session):
-    requests = reactive.Value(0)
+    # Reactive state to hold the answer text
+    answer_txt = reactive.Value("Faça sua pergunta e clique em “Consultar Origin”.")
 
     @render.text
     def status():
@@ -95,7 +90,7 @@ def server(input, output, session):
 
     @render.text
     def answer():
-        return "Faça sua pergunta e clique em “Consultar Origin”."
+        return answer_txt()
 
     @reactive.Effect
     @reactive.event(input.consultar)
@@ -109,9 +104,8 @@ def server(input, output, session):
             ui.notification_show("Claude indisponível. Verifique ANTHROPIC_API_KEY e o pacote 'anthropic'.", type="error")
             return
         ui.notification_show("Consultando o Claude…", type="message", duration=1.5)
-        requests.set(requests() + 1)
         txt = ask_claude(q, c)
-        ui.update_text("answer", txt)
+        # Update the reactive value; outputs re-render automatically
+        answer_txt.set(txt)
 
-# ------------------------ App -------------------------
 app = App(app_ui, server)
