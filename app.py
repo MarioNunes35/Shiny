@@ -1,4 +1,4 @@
-# app.py — ChatGPT-style UI with Light/Dark theme toggle
+# app.py — ChatGPT-style UI with Light/Dark theme toggle (fixed panel_fixed style)
 from shiny import App, ui, render, reactive
 from dotenv import load_dotenv
 import os
@@ -100,8 +100,10 @@ app_ui = ui.page_fluid(
         ),
     ),
     ui.div({"class":"chat-container"}, ui.output_ui("chat_thread")),
+    # FIX: remove style kwarg from panel_fixed (Shiny supplies its own style);
+    # move padding into the inner div instead.
     ui.panel_fixed(
-        ui.div({"class":"panel-bottom"},
+        ui.div({"class":"panel-bottom", "style":"padding:0"},
             ui.div({"class":"composer"},
                 ui.div({"class":"left"},
                     ui.input_text_area("prompt", None, rows=3,
@@ -119,7 +121,7 @@ app_ui = ui.page_fluid(
                 ui.input_action_button("send","Enviar", class_="btn btn-primary"),
             )
         ),
-        left="0", right="0", bottom="0", style="padding:0"
+        left="0", right="0", bottom="0"
     )
 )
 
