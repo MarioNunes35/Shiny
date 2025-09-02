@@ -1,3 +1,6 @@
-shiny>=0.6
+shiny>=1.4.0
 anthropic
 python-dotenv
+pypdf
+scikit-learn
+joblib
