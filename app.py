@@ -315,15 +315,14 @@ def chat_reply_with_context(history, model):
     return answer
 
 # ---------------- CSS / UI ----------------
-CSS = """:root{
+CSS = """
+:root{
   /* Light */
   --bg:#F7F7F8; --panel:#FFFFFF;
   --bubble-user:#F2F2F2; --bubble-assistant:#F7F7F8;
   --border:#E2E2E3; --text:#0F172A; --muted:#6B7280;
-  --accent:#10A37F; /* ChatGPT green */
+  --accent:#10A37F;
 }
-
-/* ChatGPT Dark */
 [data-theme='dark']{
   --bg:#343541; --panel:#343541;
   --bubble-user:#444654; --bubble-assistant:#3E3F4A;
@@ -347,7 +346,7 @@ a{color:var(--accent)}
 .kb{max-width:980px;margin:10px auto;padding:0 16px}
 
 /* Mais espaço no rodapé para a barra fixa */
-.chat-container{max-width:980px;margin:0 auto;padding:8px 16px 200px}
+.chat-container{max-width:980px;margin:0 auto;padding:8px 16px 220px}
 
 .message{
   display:flex;gap:12px;padding:14px 16px;border-radius:16px;margin:10px 0;
@@ -361,41 +360,58 @@ a{color:var(--accent)}
 .role{font-weight:600;margin-bottom:4px;color:var(--muted)}
 .content{white-space:pre-wrap;line-height:1.55;font-size:15px}
 
-/* Barra fixa estilo ChatGPT */
+/* Barra fixa */
 .panel-bottom{
   position:sticky;bottom:0;z-index:10;
   backdrop-filter:blur(10px);
   background:linear-gradient(180deg,rgba(0,0,0,0), var(--bg) 30%, var(--bg));
   border-top:1px solid var(--border);
-  padding:14px 0 calc(14px + env(safe-area-inset-bottom));
+  padding:12px 0 calc(16px + env(safe-area-inset-bottom));
 }
-.composer{max-width:980px;margin:0 auto;display:flex;gap:12px;align-items:flex-end}
-.composer .left{flex:1}
+.composer{
+  max-width:980px;margin:0 auto;
+  display:flex;gap:12px;align-items:flex-end;
+  padding:0 16px;
+}
+.composer .left{
+  flex:1;
+  display:flex; flex-direction:column; gap:10px;
+}
 
-/* Textarea maior + auto-grow + look ChatGPT */
+/* Textarea bem maior + 100% de largura + contraste */
 textarea.form-control#prompt{
+  width:100% !important;
   background:#40414F; color:#ECECF1;
-  border:1px solid #565869;
-  border-radius:14px; padding:14px 14px;
-  min-height:72px; max-height:40vh; resize:vertical;
-  font-size:16px; line-height:1.35;
+  border:1px solid #6b6f76;
+  border-radius:14px; padding:16px 16px;
+  min-height:120px; max-height:50vh; resize:vertical;
+  font-size:16px; line-height:1.4;
+  box-shadow:none;
+}
+textarea.form-control#prompt::placeholder{color:#c5c7d0;opacity:.9}
+textarea.form-control#prompt:focus{
+  border-color:#19C37D; outline:none;
+  box-shadow:0 0 0 3px rgba(25,195,125,.18);
 }
 [data-theme='light'] textarea.form-control#prompt{
   background:#fff; color:var(--text); border:1px solid var(--border);
 }
+[data-theme='light'] textarea.form-control#prompt::placeholder{color:#6B7280}
 
-/* Select e botões no mesmo tema */
+/* Select e botões */
 select.form-select{
   background:var(--panel); color:var(--text); border:1px solid var(--border);
-  border-radius:12px; height:40px;
+  border-radius:12px; height:44px;
 }
 .btn-primary{
   background:var(--accent); border-color:var(--accent);
-  padding:10px 16px; border-radius:12px; font-weight:600
+  height:48px; padding:0 18px; border-radius:12px; font-weight:600
 }
 .btn-primary:hover{filter:brightness(.95)}
 .badge-ok{color:#10b981}.badge-warn{color:#f59e0b}.badge-err{color:#ef4444}
+
 """
+
 
 app_ui = ui.page_fluid(
     ui.tags.style(CSS),
@@ -585,6 +601,7 @@ def server(input, output, session):
         push("assistant", reply)
 
 app = App(app_ui, server)
+
 
 
 
