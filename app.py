@@ -316,6 +316,7 @@ def chat_reply_with_context(history, model):
 
 # ---------------- CSS / UI ----------------
 CSS = """
+
 :root{
   /* Light */
   --bg:#F7F7F8; --panel:#FFFFFF;
@@ -337,16 +338,30 @@ body{
 }
 a{color:var(--accent)}
 
-.header{max-width:980px;margin:18px auto 0;padding:8px 16px;display:flex;align-items:center;gap:8px;justify-content:space-between}
+/* ===== FULL BLEED ===== */
+/* 100% de largura com padding lateral responsivo */
+:root{ --padX: clamp(14px, 3vw, 32px); }
+
+.header{
+  max-width:100%; width:100%;
+  margin:18px auto 0; padding:8px var(--padX);
+  display:flex; align-items:center; gap:8px; justify-content:space-between
+}
 .header .left h3{font-weight:700;margin:0}
 .header .sub{color:var(--muted);margin:2px 0 0 0}
 .header .right{display:flex;gap:8px;align-items:center}
 .badge{font-size:.9rem;color:var(--muted)}
 
-.kb{max-width:980px;margin:10px auto;padding:0 16px}
+.kb{
+  max-width:100%; width:100%;
+  margin:10px auto; padding:0 var(--padX);
+}
 
 /* Mais espaço no rodapé para a barra fixa */
-.chat-container{max-width:980px;margin:0 auto;padding:8px 16px 220px}
+.chat-container{
+  max-width:100%; width:100%;
+  margin:0 auto; padding:8px var(--padX) 260px;
+}
 
 .message{
   display:flex;gap:12px;padding:14px 16px;border-radius:16px;margin:10px 0;
@@ -366,29 +381,28 @@ a{color:var(--accent)}
   backdrop-filter:blur(10px);
   background:linear-gradient(180deg,rgba(0,0,0,0), var(--bg) 30%, var(--bg));
   border-top:1px solid var(--border);
-  padding:12px 0 calc(16px + env(safe-area-inset-bottom));
+  padding:14px 0 calc(18px + env(safe-area-inset-bottom));
 }
 .composer{
-  max-width:980px;margin:0 auto;
-  display:flex;gap:12px;align-items:flex-end;
-  padding:0 16px;
+  max-width:100%; width:100%;
+  margin:0 auto; padding:0 var(--padX);
+  display:flex;gap:16px;align-items:flex-end;
 }
 .composer .left{
-  flex:1;
-  display:flex; flex-direction:column; gap:10px;
+  flex:1; display:flex; flex-direction:column; gap:12px;
 }
 
-/* Textarea bem maior + 100% de largura + contraste */
+/* Textarea grande e contrastada */
 textarea.form-control#prompt{
   width:100% !important;
   background:#40414F; color:#ECECF1;
   border:1px solid #6b6f76;
-  border-radius:14px; padding:16px 16px;
-  min-height:120px; max-height:50vh; resize:vertical;
-  font-size:16px; line-height:1.4;
+  border-radius:14px; padding:20px 20px;
+  min-height:200px; max-height:65vh; resize:vertical;
+  font-size:16px; line-height:1.45;
   box-shadow:none;
 }
-textarea.form-control#prompt::placeholder{color:#c5c7d0;opacity:.9}
+textarea.form-control#prompt::placeholder{color:#c5c7d0;opacity:.95}
 textarea.form-control#prompt:focus{
   border-color:#19C37D; outline:none;
   box-shadow:0 0 0 3px rgba(25,195,125,.18);
@@ -401,11 +415,11 @@ textarea.form-control#prompt:focus{
 /* Select e botões */
 select.form-select{
   background:var(--panel); color:var(--text); border:1px solid var(--border);
-  border-radius:12px; height:44px;
+  border-radius:12px; height:48px;
 }
 .btn-primary{
   background:var(--accent); border-color:var(--accent);
-  height:48px; padding:0 18px; border-radius:12px; font-weight:600
+  height:52px; padding:0 22px; border-radius:12px; font-weight:600
 }
 .btn-primary:hover{filter:brightness(.95)}
 .badge-ok{color:#10b981}.badge-warn{color:#f59e0b}.badge-err{color:#ef4444}
@@ -601,6 +615,7 @@ def server(input, output, session):
         push("assistant", reply)
 
 app = App(app_ui, server)
+
 
 
 
