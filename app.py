@@ -1,10 +1,21 @@
-# app.py — Chat UI + Light/Dark + PDF RAG cache (TF-IDF) — fixed for Shiny 1.4 (await send_custom_message)
+# app-16.py — Shiny (Python) chat UI + RAG de PDFs (TF-IDF) com persistência em S3 (Cloudflare R2)
+# Compatível com Shiny 1.4 (usa `await session.send_custom_message`)
+#
+# ENV esperadas no Posit Connect:
+#   ANTHROPIC_API_KEY
+#   S3_ENDPOINT_URL=https://<ACCOUNT_ID>.r2.cloudflarestorage.com
+#   S3_BUCKET=origin-assistant-cache
+#   AWS_ACCESS_KEY_ID=<Access Key ID>
+#   AWS_SECRET_ACCESS_KEY=<Secret Access Key>
+#   AWS_DEFAULT_REGION=auto            (opcional; pode omitir)
+#   S3_PREFIX=osa-cache/               (opcional; terminar com '/')
+#
 from shiny import App, ui, render, reactive
 from dotenv import load_dotenv
-import os, traceback, re, json, hashlib
+import os, re, json, hashlib
 from pathlib import Path
 
-# -------- Env / Anthropic --------
+# ---------------- Env / Anthropíc ----------------
 load_dotenv()
 API_KEY = os.getenv("ANTHROPIC_API_KEY")
 HAS_KEY = bool(API_KEY)
@@ -21,7 +32,7 @@ if HAS_KEY and Anthropic is not None:
     except Exception:
         client = None
 
-# -------- Optional deps for RAG (graceful fallback) --------
+# ---------------- RAG deps ----------------
 HAVE_RAG_DEPS = True
 try:
     from pypdf import PdfReader
@@ -35,9 +46,19 @@ except Exception:
     cosine_similarity = None
     dump = load = None
 
-print("RAG deps disponíveis?", HAVE_RAG_DEPS)
+# ---------------- S3 / R2 deps ----------------
+HAVE_S3 = True
+try:
+    import boto3
+    from botocore.exceptions import ClientError
+except Exception:
+    HAVE_S3 = False
+    boto3 = None
+    ClientError = Exception
 
-# -------- RAG cache paths --------
+print(f"[BOOT] RAG={HAVE_RAG_DEPS} | S3={HAVE_S3} | Anthropic={(client is not None)}")
+
+# ---------------- Caminhos do índice ----------------
 DATA_DIR = Path("data")
 CACHE_DIR = DATA_DIR / "cache"
 CHUNKS_JSON = CACHE_DIR / "chunks.json"
@@ -47,20 +68,106 @@ MATRIX_JOBLIB = CACHE_DIR / "tfidf_matrix.joblib"
 for d in (DATA_DIR, CACHE_DIR):
     d.mkdir(parents=True, exist_ok=True)
 
-# -------- RAG helpers --------
-def sha256_file(path: Path) -> str:
-    h = hashlib.sha256()
-    with open(path, "rb") as f:
-        for b in iter(lambda: f.read(1024*1024), b""):
-            h.update(b)
-    return h.hexdigest()
+# ---------------- Helpers S3/R2 ----------------
+def _s3_conf():
+    if not HAVE_S3:
+        return None
+    endpoint = os.getenv("S3_ENDPOINT_URL")  # ex.: https://<ACCOUNT_ID>.r2.cloudflarestorage.com
+    bucket = os.getenv("S3_BUCKET")
+    key = os.getenv("AWS_ACCESS_KEY_ID")
+    secret = os.getenv("AWS_SECRET_ACCESS_KEY")
+    prefix = os.getenv("S3_PREFIX", "osa-cache/")
+    # normaliza prefixo
+    if prefix and not prefix.endswith('/'):
+        prefix = prefix + '/'
+    if not (endpoint and bucket and key and secret):
+        return None
+    # region: se vier vazio/auto, omite para deixar boto3 escolher
+    region = os.getenv("AWS_DEFAULT_REGION")
+    if region and region.lower() == "auto":
+        region = None
+    try:
+        s3 = boto3.client(
+            "s3",
+            endpoint_url=endpoint,
+            aws_access_key_id=key,
+            aws_secret_access_key=secret,
+            region_name=region,
+        )
+        return {"client": s3, "bucket": bucket, "prefix": prefix}
+    except Exception as e:
+        print(f"[S3] erro ao criar cliente: {e}")
+        return None
 
+_S3 = _s3_conf()
+
+def _key(name: str) -> str:
+    p = _S3["prefix"] if (_S3 and _S3.get("prefix")) else ""
+    return f"{p}{name}"
+
+def s3_pull_cache_if_needed():
+    if not _S3:
+        return False
+    # se já existe local, não baixa
+    if CHUNKS_JSON.exists() and VECTORIZER_JOBLIB.exists() and MATRIX_JOBLIB.exists():
+        print("[S3] cache local encontrado; não foi necessário baixar.")
+        return False
+    client = _S3["client"]; bucket = _S3["bucket"]
+    any_ok = False
+    for key, local in [
+        ("chunks.json", CHUNKS_JSON),
+        ("tfidf_vectorizer.joblib", VECTORIZER_JOBLIB),
+        ("tfidf_matrix.joblib", MATRIX_JOBLIB),
+    ]:
+        try:
+            client.download_file(bucket, _key(key), str(local))
+            print(f"[S3] baixado s3://{bucket}/{_key(key)} -> {local}")
+            any_ok = True
+        except ClientError as e:
+            code = getattr(e, "response", {}).get("Error", {}).get("Code", "")
+            if code in ("404","NoSuchKey","NotFound"):
+                print(f"[S3] ausente: s3://{bucket}/{_key(key)}")
+            else:
+                print(f"[S3] erro ao baixar {key}: {e}")
+        except Exception as e:
+            print(f"[S3] erro genérico ao baixar {key}: {e}")
+    return any_ok
+
+def s3_push_cache():
+    if not _S3:
+        return False
+    if not (CHUNKS_JSON.exists() and VECTORIZER_JOBLIB.exists() and MATRIX_JOBLIB.exists()):
+        print("[S3] cache local incompleto; não foi enviado.")
+        return False
+    client = _S3["client"]; bucket = _S3["bucket"]
+    ok_all = True
+    for key, local in [
+        ("chunks.json", CHUNKS_JSON),
+        ("tfidf_vectorizer.joblib", VECTORIZER_JOBLIB),
+        ("tfidf_matrix.joblib", MATRIX_JOBLIB),
+    ]:
+        try:
+            extra = {"ContentType": "application/json"} if local.suffix == ".json" else {"ContentType": "application/octet-stream"}
+            client.upload_file(str(local), bucket, _key(key), ExtraArgs=extra)
+            print(f"[S3] enviado {local} -> s3://{bucket}/{_key(key)}")
+        except Exception as e:
+            ok_all = False
+            print(f"[S3] erro ao enviar {local}: {e}")
+    return ok_all
+
+# tenta restaurar do S3 na inicialização
+try:
+    s3_pull_cache_if_needed()
+except Exception as e:
+    print(f"[S3] falha ao restaurar cache no boot: {e}")
+
+# ---------------- RAG helpers ----------------
 def extract_text(pdf_path: Path) -> str:
     reader = PdfReader(str(pdf_path))
-    text = []
-    for page in reader.pages:
-        text.append(page.extract_text() or "")
-    return "\n".join(text)
+    txt = []
+    for pg in reader.pages:
+        txt.append(pg.extract_text() or "")
+    return "\n".join(txt)
 
 def chunk_text(text: str, max_chars=900, overlap=220):
     text = re.sub(r"\s+", " ", text).strip()
@@ -73,6 +180,9 @@ def chunk_text(text: str, max_chars=900, overlap=220):
     return [c for c in chunks if c.strip()]
 
 def load_index():
+    # primeiro tenta baixar do S3 (se habilitado)
+    if _S3:
+        s3_pull_cache_if_needed()
     if CHUNKS_JSON.exists() and VECTORIZER_JOBLIB.exists() and MATRIX_JOBLIB.exists():
         chunks = json.loads(CHUNKS_JSON.read_text(encoding="utf-8"))
         vectorizer = load(VECTORIZER_JOBLIB)
@@ -84,6 +194,9 @@ def save_index(chunks, vectorizer, matrix):
     CHUNKS_JSON.write_text(json.dumps(chunks, ensure_ascii=False), encoding="utf-8")
     dump(vectorizer, VECTORIZER_JOBLIB)
     dump(matrix, MATRIX_JOBLIB)
+    # sincroniza com S3
+    if _S3:
+        s3_push_cache()
 
 def add_pdfs_to_index(file_paths: list[Path]):
     if not HAVE_RAG_DEPS:
@@ -92,7 +205,7 @@ def add_pdfs_to_index(file_paths: list[Path]):
     new_chunks = []
     for p in file_paths:
         try:
-            doc_id = sha256_file(p)
+            doc_id = hashlib.sha256(p.read_bytes()).hexdigest()
             text = extract_text(p)
             for idx, ch in enumerate(chunk_text(text)):
                 new_chunks.append({
@@ -119,16 +232,12 @@ def retrieve(query: str, k=4):
     q_vec = vectorizer.transform([query])
     sims = cosine_similarity(q_vec, matrix)[0]
     top_idx = sims.argsort()[::-1][:k]
-    results = []
-    for i in top_idx:
-        c = chunks[i]
-        results.append({
-            "score": float(sims[i]),
-            "text": c["text"],
-            "source": c["source"],
-            "chunk_id": c["chunk_id"]
-        })
-    return results
+    return [{
+        "score": float(sims[i]),
+        "text": chunks[i]["text"],
+        "source": chunks[i]["source"],
+        "chunk_id": chunks[i]["chunk_id"]
+    } for i in top_idx]
 
 def build_context(query: str):
     hits = retrieve(query, k=4)
@@ -138,20 +247,17 @@ def build_context(query: str):
     cites = "\n".join([f"- {h['source']} ({h['chunk_id']})" for h in hits])
     return ctx, cites
 
-# -------- Chat helpers --------
+# ---------------- Chat helpers ----------------
 def anthropic_messages_from_history(history):
     msgs = []
     for m in history:
-        role = m["role"]
-        if role not in ("user","assistant"):
-            continue
-        msgs.append({"role": role, "content":[{"type":"text","text": m["content"]}]})
+        if m["role"] in ("user","assistant"):
+            msgs.append({"role": m["role"], "content":[{"type":"text","text": m["content"]}]})
     return msgs
 
 def chat_reply_with_context(history, model):
     if client is None:
-        return "Configuração necessária: defina ANTHROPIC_API_KEY e instale 'anthropic'."
-    # última pergunta do usuário
+        return "Claude indisponível. Configure ANTHROPIC_API_KEY e o pacote 'anthropic'."
     question = next((m["content"] for m in reversed(history) if m["role"]=="user"), "")
     ctx, cites = build_context(question) if HAVE_RAG_DEPS else ("", "")
 
@@ -176,7 +282,7 @@ def chat_reply_with_context(history, model):
         answer += "\n\n---\n**Fontes:**\n" + cites
     return answer
 
-# ----------------- CSS (Light/Dark via data-theme) -----------------
+# ---------------- CSS / UI ----------------
 CSS = """
 :root{
   --bg:#f8fafc; --panel:#ffffff; --bubble-user:#f3f4f6; --bubble-assistant:#eef2ff;
@@ -210,10 +316,9 @@ select.form-select{background:var(--panel);color:var(--text);border:1px solid va
 .badge-ok{color:#10b981}.badge-warn{color:#f59e0b}.badge-err{color:#ef4444}
 """
 
-# ------------------ UI ------------------
 app_ui = ui.page_fluid(
     ui.tags.style(CSS),
-    # Theme bootstrap + handler
+    # theme handler
     ui.tags.script("""
       Shiny.addCustomMessageHandler('set_theme', (theme) => {
         document.documentElement.setAttribute('data-theme', theme);
@@ -233,7 +338,7 @@ app_ui = ui.page_fluid(
         {"class":"header"},
         ui.div({"class":"left"},
                ui.h3("🚀 Origin Software Assistant"),
-               ui.p({"class":"sub"}, "Chat + RAG de PDFs (cache local) • Claude via ANTHROPIC_API_KEY")),
+               ui.p({"class":"sub"}, "Chat + RAG de PDFs (cache local + S3/R2) • Claude via ANTHROPIC_API_KEY")),
         ui.div({"class":"right"},
                ui.input_select("theme", None,
                                {"dark":"🌙 Escuro","light":"☀️ Claro"},
@@ -272,7 +377,6 @@ app_ui = ui.page_fluid(
     )
 )
 
-# ------------- Server -------------
 def server(input, output, session):
     history = reactive.Value([])
     typing = reactive.Value(False)
@@ -296,7 +400,8 @@ def server(input, output, session):
         chunks, _, _ = load_index()
         n_docs = len({c["source"] for c in chunks}) if chunks else 0
         n_chunks = len(chunks)
-        return f"📄 {n_docs} PDF(s) • 🧩 {n_chunks} chunk(s)"
+        tip = " • S3 ativo" if _S3 else ""
+        return f"📄 {n_docs} PDF(s) • 🧩 {n_chunks} chunk(s){tip}"
 
     @render.ui
     def chat_thread():
@@ -329,13 +434,13 @@ def server(input, output, session):
         history.set([])
         ui.update_text_area("prompt", value="")
 
-    # Apply theme when selection changes (Shiny 1.4: await coroutine)
+    # Tema (Shiny 1.4 exige await)
     @reactive.Effect
     async def _theme_apply():
         theme = input.theme() or "dark"
         await session.send_custom_message("set_theme", theme)
 
-    # Key handler + autoscroll
+    # atalhos de teclado + autoscroll
     ui.tags.script("""
         document.addEventListener('keydown', (e)=>{
           if(e.target.id==='prompt' && e.key==='Enter' && !e.shiftKey){
@@ -364,7 +469,9 @@ def server(input, output, session):
             dst.write_bytes(src.read_bytes())
             paths.append(dst)
         total = add_pdfs_to_index(paths)
-        ui.notification_show(f"PDF(s) adicionados. Total de chunks: {total}", type="message")
+        ok = s3_push_cache() if _S3 else False
+        msg = f"PDF(s) adicionados. Total de chunks: {total}" + (" • sincronizado com S3" if ok else "")
+        ui.notification_show(msg, type="message")
 
     @reactive.Effect
     @reactive.event(input.send)
@@ -385,3 +492,4 @@ def server(input, output, session):
         push("assistant", reply)
 
 app = App(app_ui, server)
+
