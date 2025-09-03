@@ -1,21 +1,28 @@
-# app-16.py — Shiny (Python) chat UI + RAG de PDFs (TF-IDF) com persistência em S3 (Cloudflare R2)
-# Compatível com Shiny 1.4 (usa `await session.send_custom_message`)
+# app.py — Shiny (Python) chat + RAG de PDFs com persistência S3 (Cloudflare R2) e FALLBACK automático para Claude
+# - Usa TF-IDF para recuperar trechos de PDFs
+# - Se o contexto estiver fraco/insuficiente, faz 2ª chamada ao Claude SEM contexto (conhecimento geral)
+# - Persistência no R2 via S3 API (S3_* envs)
 #
-# ENV esperadas no Posit Connect:
+# ENV necessárias no Posit Connect (Settings → Environment):
 #   ANTHROPIC_API_KEY
 #   S3_ENDPOINT_URL=https://<ACCOUNT_ID>.r2.cloudflarestorage.com
 #   S3_BUCKET=origin-assistant-cache
 #   AWS_ACCESS_KEY_ID=<Access Key ID>
 #   AWS_SECRET_ACCESS_KEY=<Secret Access Key>
-#   AWS_DEFAULT_REGION=auto            (opcional; pode omitir)
-#   S3_PREFIX=osa-cache/               (opcional; terminar com '/')
+#   AWS_DEFAULT_REGION=auto        # opcional
+#   S3_PREFIX=osa-cache/           # opcional (recomendado; terminar com '/')
+#
+#   # Fallback de RAG (opcionais — já possuem default):
+#   RAG_FALLBACK=auto              # auto | off
+#   RAG_MIN_TOPSCORE=0.18          # limiar do score da 1ª evidência (0–1)
+#   RAG_MIN_CTXCHARS=300           # mínimo de caracteres do contexto
 #
 from shiny import App, ui, render, reactive
 from dotenv import load_dotenv
 import os, re, json, hashlib
 from pathlib import Path
 
-# ---------------- Env / Anthropíc ----------------
+# ---------------- Env / Claude ----------------
 load_dotenv()
 API_KEY = os.getenv("ANTHROPIC_API_KEY")
 HAS_KEY = bool(API_KEY)
@@ -31,6 +38,16 @@ if HAS_KEY and Anthropic is not None:
         client = Anthropic(api_key=API_KEY)
     except Exception:
         client = None
+
+# ---------------- Thresholds / fallback ----------------
+RAG_FALLBACK = (os.getenv("RAG_FALLBACK", "auto") or "auto").lower()
+RAG_MIN_TOPSCORE = float(os.getenv("RAG_MIN_TOPSCORE", "0.18"))
+RAG_MIN_CTXCHARS = int(os.getenv("RAG_MIN_CTXCHARS", "300"))
+
+def rag_should_fallback(stats: dict) -> bool:
+    if RAG_FALLBACK == "off":
+        return False
+    return (stats.get("top", 0.0) < RAG_MIN_TOPSCORE) or (stats.get("chars", 0) < RAG_MIN_CTXCHARS)
 
 # ---------------- RAG deps ----------------
 HAVE_RAG_DEPS = True
@@ -56,7 +73,7 @@ except Exception:
     boto3 = None
     ClientError = Exception
 
-print(f"[BOOT] RAG={HAVE_RAG_DEPS} | S3={HAVE_S3} | Anthropic={(client is not None)}")
+print(f"[BOOT] RAG={HAVE_RAG_DEPS} | S3={HAVE_S3} | Claude={(client is not None)} | FB={RAG_FALLBACK}/{RAG_MIN_TOPSCORE}/{RAG_MIN_CTXCHARS}")
 
 # ---------------- Caminhos do índice ----------------
 DATA_DIR = Path("data")
@@ -82,7 +99,7 @@ def _s3_conf():
         prefix = prefix + '/'
     if not (endpoint and bucket and key and secret):
         return None
-    # region: se vier vazio/auto, omite para deixar boto3 escolher
+    # region (auto -> None)
     region = os.getenv("AWS_DEFAULT_REGION")
     if region and region.lower() == "auto":
         region = None
@@ -110,7 +127,7 @@ def s3_pull_cache_if_needed():
         return False
     # se já existe local, não baixa
     if CHUNKS_JSON.exists() and VECTORIZER_JOBLIB.exists() and MATRIX_JOBLIB.exists():
-        print("[S3] cache local encontrado; não foi necessário baixar.")
+        print("[S3] cache local presente.")
         return False
     client = _S3["client"]; bucket = _S3["bucket"]
     any_ok = False
@@ -137,7 +154,7 @@ def s3_push_cache():
     if not _S3:
         return False
     if not (CHUNKS_JSON.exists() and VECTORIZER_JOBLIB.exists() and MATRIX_JOBLIB.exists()):
-        print("[S3] cache local incompleto; não foi enviado.")
+        print("[S3] cache local incompleto; não enviado.")
         return False
     client = _S3["client"]; bucket = _S3["bucket"]
     ok_all = True
@@ -228,24 +245,27 @@ def add_pdfs_to_index(file_paths: list[Path]):
 def retrieve(query: str, k=4):
     chunks, vectorizer, matrix = load_index()
     if not chunks or vectorizer is None:
-        return []
+        return [], 0.0
     q_vec = vectorizer.transform([query])
     sims = cosine_similarity(q_vec, matrix)[0]
-    top_idx = sims.argsort()[::-1][:k]
-    return [{
+    idx = sims.argsort()[::-1][:k]
+    hits = [{
         "score": float(sims[i]),
         "text": chunks[i]["text"],
         "source": chunks[i]["source"],
         "chunk_id": chunks[i]["chunk_id"]
-    } for i in top_idx]
+    } for i in idx]
+    top = float(sims[idx[0]]) if len(idx) else 0.0
+    return hits, top
 
 def build_context(query: str):
-    hits = retrieve(query, k=4)
+    hits, top = retrieve(query, k=4)
     ctx = "\n\n".join(
         [f"[{i+1}] ({h['source']} • {h['chunk_id']} • score={h['score']:.3f})\n{h['text']}" for i, h in enumerate(hits)]
     )
     cites = "\n".join([f"- {h['source']} ({h['chunk_id']})" for h in hits])
-    return ctx, cites
+    stats = {"top": top, "chars": len(ctx), "nhits": len(hits)}
+    return ctx, cites, stats
 
 # ---------------- Chat helpers ----------------
 def anthropic_messages_from_history(history):
@@ -255,21 +275,7 @@ def anthropic_messages_from_history(history):
             msgs.append({"role": m["role"], "content":[{"type":"text","text": m["content"]}]})
     return msgs
 
-def chat_reply_with_context(history, model):
-    if client is None:
-        return "Claude indisponível. Configure ANTHROPIC_API_KEY e o pacote 'anthropic'."
-    question = next((m["content"] for m in reversed(history) if m["role"]=="user"), "")
-    ctx, cites = build_context(question) if HAVE_RAG_DEPS else ("", "")
-
-    system = (
-        "Você é o Origin Software Assistant. Use o CONTEXTO quando ele estiver presente; "
-        "se a resposta não estiver no contexto, diga claramente que o documento não contém a informação.\n\n"
-        f"=== CONTEXTO ===\n{ctx}\n=== FIM DO CONTEXTO ==="
-    )
-    resp = client.messages.create(
-        model=model, max_tokens=900, temperature=0.2,
-        system=system, messages=anthropic_messages_from_history(history)
-    )
+def _extract_text_from_resp(resp):
     parts = []
     try:
         for block in getattr(resp, "content", []):
@@ -277,14 +283,49 @@ def chat_reply_with_context(history, model):
                 parts.append(block.text)
     except Exception:
         parts = [str(resp)]
-    answer = "\n".join(parts) if parts else str(resp)
-    if cites:
-        answer += "\n\n---\n**Fontes:**\n" + cites
+    return "\n".join(parts) if parts else str(resp)
+
+def chat_reply_with_context(history, model):
+    if client is None:
+        return "Claude indisponível. Configure ANTHROPIC_API_KEY e o pacote 'anthropic'."
+
+    question = next((m["content"] for m in reversed(history) if m["role"]=="user"), "")
+
+    # 1ª via: RAG com contexto
+    if HAVE_RAG_DEPS:
+        ctx, cites, stats = build_context(question)
+    else:
+        ctx, cites, stats = ("", "", {"top": 0.0, "chars": 0, "nhits": 0})
+
+    use_rag = bool(ctx) and not rag_should_fallback(stats)
+
+    if use_rag:
+        system = (
+            "Você é o Origin Software Assistant. Use apenas o CONTEXTO abaixo; "
+            "se algo não estiver no contexto, responda somente com o que está suportado.\n\n"
+            f"=== CONTEXTO ===\n{ctx}\n=== FIM DO CONTEXTO ==="
+        )
+        resp = client.messages.create(
+            model=model, max_tokens=900, temperature=0.2,
+            system=system, messages=anthropic_messages_from_history(history)
+        )
+        answer = _extract_text_from_resp(resp)
+        if cites:
+            answer += "\n\n---\n**Fontes:**\n" + cites
+        return answer
+
+    # 2ª via: fallback (sem contexto) — conhecimento geral
+    system = "Você é o Origin Software Assistant. Responda com clareza e objetividade."
+    resp = client.messages.create(
+        model=model, max_tokens=900, temperature=0.2,
+        system=system, messages=anthropic_messages_from_history(history)
+    )
+    answer = _extract_text_from_resp(resp)
+    answer += "\n\n_(Respondi por conhecimento geral; PDFs não tinham informação suficiente.)_"
     return answer
 
 # ---------------- CSS / UI ----------------
-CSS = """
-:root{
+CSS = """:root{
   --bg:#f8fafc; --panel:#ffffff; --bubble-user:#f3f4f6; --bubble-assistant:#eef2ff;
   --border:#e5e7eb; --text:#0f172a; --muted:#475569; --accent:#7c3aed;
 }
@@ -319,8 +360,7 @@ select.form-select{background:var(--panel);color:var(--text);border:1px solid va
 app_ui = ui.page_fluid(
     ui.tags.style(CSS),
     # theme handler
-    ui.tags.script("""
-      Shiny.addCustomMessageHandler('set_theme', (theme) => {
+    ui.tags.script("""      Shiny.addCustomMessageHandler('set_theme', (theme) => {
         document.documentElement.setAttribute('data-theme', theme);
         try { localStorage.setItem('osa-theme', theme); } catch(e){}
       });
@@ -338,11 +378,9 @@ app_ui = ui.page_fluid(
         {"class":"header"},
         ui.div({"class":"left"},
                ui.h3("🚀 Origin Software Assistant"),
-               ui.p({"class":"sub"}, "Chat + RAG de PDFs (cache local + S3/R2) • Claude via ANTHROPIC_API_KEY")),
+               ui.p({"class":"sub"}, "Chat + RAG (PDFs) com fallback automático para Claude • Cache S3/R2")),
         ui.div({"class":"right"},
-               ui.input_select("theme", None,
-                               {"dark":"🌙 Escuro","light":"☀️ Claro"},
-                               selected="dark"),
+               ui.input_select("theme", None, {"dark":"🌙 Escuro","light":"☀️ Claro"}, selected="dark"),
                ui.tags.span({"class":"badge"}, ui.output_text("status", inline=True)),
         ),
     ),
@@ -387,11 +425,11 @@ def server(input, output, session):
     @render.text
     def status():
         if HAS_KEY and client is not None:
-            return "✅ Chave detectada"
+            return "✅ Claude pronto"
         elif HAS_KEY and client is None and Anthropic is None:
             return "⚠️ Falta instalar 'anthropic'"
         else:
-            return "❌ Sem chave"
+            return "❌ Sem ANTHROPIC_API_KEY"
 
     @render.text
     def kb_status():
@@ -401,7 +439,8 @@ def server(input, output, session):
         n_docs = len({c["source"] for c in chunks}) if chunks else 0
         n_chunks = len(chunks)
         tip = " • S3 ativo" if _S3 else ""
-        return f"📄 {n_docs} PDF(s) • 🧩 {n_chunks} chunk(s){tip}"
+        fb = f" • FB:{RAG_FALLBACK}({RAG_MIN_TOPSCORE}/{RAG_MIN_CTXCHARS})"
+        return f"📄 {n_docs} PDF(s) • 🧩 {n_chunks} chunk(s){tip}{fb}"
 
     @render.ui
     def chat_thread():
@@ -440,9 +479,8 @@ def server(input, output, session):
         theme = input.theme() or "dark"
         await session.send_custom_message("set_theme", theme)
 
-    # atalhos de teclado + autoscroll
-    ui.tags.script("""
-        document.addEventListener('keydown', (e)=>{
+    # atalhos + autoscroll
+    ui.tags.script("""        document.addEventListener('keydown', (e)=>{
           if(e.target.id==='prompt' && e.key==='Enter' && !e.shiftKey){
             e.preventDefault();
             document.getElementById('send').click();
@@ -452,7 +490,7 @@ def server(input, output, session):
           const el=document.querySelector('.chat-container');
           if(el) el.scrollTop = el.scrollHeight;
         }).observe(document.body,{childList:true,subtree:true});
-    """)
+    """    )
 
     @reactive.Effect
     @reactive.event(input.docs)
@@ -492,4 +530,5 @@ def server(input, output, session):
         push("assistant", reply)
 
 app = App(app_ui, server)
+
 
