@@ -339,7 +339,6 @@ body{
 a{color:var(--accent)}
 
 /* ===== FULL BLEED ===== */
-/* 100% de largura com padding lateral responsivo */
 :root{ --padX: clamp(14px, 3vw, 32px); }
 
 .header{
@@ -357,14 +356,13 @@ a{color:var(--accent)}
   margin:10px auto; padding:0 var(--padX);
 }
 
-/* Mais espaço no rodapé para a barra fixa */
 .chat-container{
   max-width:100%; width:100%;
   margin:0 auto; padding:8px var(--padX) 260px;
 }
 
 .message{
-  display:flex;gap:12px;padding:14px 16px;border-radius:16px;margin:10px 0;
+  display:flex;gap:12px;padding:12px 14px;border-radius:16px;margin:10px 0;
   border:1px solid var(--border);background:var(--bubble-assistant)
 }
 .message.user{background:var(--bubble-user)}
@@ -373,9 +371,14 @@ a{color:var(--accent)}
   display:flex;align-items:center;justify-content:center;font-weight:700;color:white;flex-shrink:0
 }
 .role{font-weight:600;margin-bottom:4px;color:var(--muted)}
-.content{white-space:pre-wrap;line-height:1.55;font-size:15px}
 
-/* Barra fixa */
+/* --- Texto mais compacto nas respostas --- */
+.content{ white-space:pre-wrap; line-height:1.36; font-size:15px; }
+.content p{ margin:.30rem 0; }
+.content ul, .content ol{ margin:.30rem 0 .30rem 1.2rem; }
+.content li{ margin:.14rem 0; }
+.content h1, .content h2, .content h3{ margin:.55rem 0 .35rem; line-height:1.22; }
+
 .panel-bottom{
   position:sticky;bottom:0;z-index:10;
   backdrop-filter:blur(10px);
@@ -392,7 +395,6 @@ a{color:var(--accent)}
   flex:1; display:flex; flex-direction:column; gap:12px;
 }
 
-/* Textarea grande e contrastada */
 textarea.form-control#prompt{
   width:100% !important;
   background:#40414F; color:#ECECF1;
@@ -412,7 +414,6 @@ textarea.form-control#prompt:focus{
 }
 [data-theme='light'] textarea.form-control#prompt::placeholder{color:#6B7280}
 
-/* Select e botões */
 select.form-select{
   background:var(--panel); color:var(--text); border:1px solid var(--border);
   border-radius:12px; height:48px;
@@ -615,6 +616,7 @@ def server(input, output, session):
         push("assistant", reply)
 
 app = App(app_ui, server)
+
 
 
 
