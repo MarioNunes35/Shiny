@@ -1,5 +1,5 @@
-# app.py — Shiny (Python) chat + RAG de PDFs com persistência S3 (Cloudflare R2) e FALLBACK automático para Claude
-# Aparência atualizada (modo escuro estilo ChatGPT) + caixa de texto maior com auto-grow
+# app.py – Shiny (Python) chat + RAG de PDFs com persistência S3 (Cloudflare R2) e FALLBACK automático para Claude
+# Design melhorado com espaçamento otimizado e visual mais moderno
 #
 # ENV necessárias no Posit Connect (Settings → Environment):
 #   ANTHROPIC_API_KEY
@@ -85,7 +85,7 @@ for d in (DATA_DIR, CACHE_DIR):
 def _s3_conf():
     if not HAVE_S3:
         return None
-    endpoint = os.getenv("S3_ENDPOINT_URL")  # ex.: https://<ACCOUNT_ID>.r2.cloudflarestorage.com
+    endpoint = os.getenv("S3_ENDPOINT_URL")
     bucket = os.getenv("S3_BUCKET")
     key = os.getenv("AWS_ACCESS_KEY_ID")
     secret = os.getenv("AWS_SECRET_ACCESS_KEY")
@@ -281,7 +281,7 @@ def chat_reply_with_context(history, model):
 
     question = next((m["content"] for m in reversed(history) if m["role"]=="user"), "")
 
-    # 1ª via: RAG com contexto
+    # RAG com contexto
     if HAVE_RAG_DEPS:
         ctx, cites, stats = build_context(question)
     else:
@@ -304,7 +304,7 @@ def chat_reply_with_context(history, model):
             answer += "\n\n---\n**Fontes:**\n" + cites
         return answer
 
-    # 2ª via: fallback (sem contexto) — conhecimento geral
+    # Fallback (sem contexto)
     system = "Você é o Origin Software Assistant. Responda com clareza e objetividade."
     resp = client.messages.create(
         model=model, max_tokens=900, temperature=0.2,
@@ -316,124 +316,416 @@ def chat_reply_with_context(history, model):
 
 # ---------------- CSS / UI ----------------
 CSS = """
-
 :root{
-  /* Light */
   --bg:#F7F7F8; --panel:#FFFFFF;
-  --bubble-user:#F2F2F2; --bubble-assistant:#F7F7F8;
+  --bubble-user:#E5F2FF; --bubble-assistant:#F7F7F8;
   --border:#E2E2E3; --text:#0F172A; --muted:#6B7280;
-  --accent:#10A37F;
+  --accent:#10A37F; --accent-hover:#0E8B6F;
+  --shadow: 0 1px 3px rgba(0,0,0,0.08);
 }
 [data-theme='dark']{
-  --bg:#343541; --panel:#343541;
-  --bubble-user:#444654; --bubble-assistant:#3E3F4A;
-  --border:#565869; --text:#ECECF1; --muted:#ACB2BF;
-  --accent:#19C37D;
+  --bg:#202123; --panel:#2D2E30;
+  --bubble-user:#343642; --bubble-assistant:#444654;
+  --border:#444654; --text:#ECECF1; --muted:#9CA3AF;
+  --accent:#19C37D; --accent-hover:#15A366;
+  --shadow: 0 2px 6px rgba(0,0,0,0.3);
 }
 
-html,body{height:100%}
+* { margin: 0; padding: 0; box-sizing: border-box; }
+html,body{height:100%; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;}
 body{
-  background:linear-gradient(180deg,var(--bg),var(--panel) 55%,var(--bg));
-  color:var(--text);
+  background: var(--bg);
+  color: var(--text);
+  transition: background 0.3s ease, color 0.3s ease;
 }
-a{color:var(--accent)}
 
-/* ===== FULL BLEED ===== */
-:root{ --padX: clamp(14px, 3vw, 32px); }
+/* Layout */
+.app-container {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+}
 
+/* Header */
 .header{
-  max-width:100%; width:100%;
-  margin:18px auto 0; padding:8px var(--padX);
-  display:flex; align-items:center; gap:8px; justify-content:space-between
+  background: var(--panel);
+  border-bottom: 1px solid var(--border);
+  padding: 16px 24px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  box-shadow: var(--shadow);
 }
-.header .left h3{font-weight:700;margin:0}
-.header .sub{color:var(--muted);margin:2px 0 0 0}
-.header .right{display:flex;gap:8px;align-items:center}
-.badge{font-size:.9rem;color:var(--muted)}
-
-.kb{
-  max-width:100%; width:100%;
-  margin:10px auto; padding:0 var(--padX);
+.header .logo-section {
+  display: flex;
+  align-items: center;
+  gap: 12px;
 }
-
-.chat-container{
-  max-width:100%; width:100%;
-  margin:0 auto; padding:8px var(--padX) 260px;
+.header .logo {
+  font-size: 28px;
+  animation: pulse 2s infinite;
 }
-
-.message{
-  display:flex;gap:12px;padding:12px 14px;border-radius:16px;margin:10px 0;
-  border:1px solid var(--border);background:var(--bubble-assistant)
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.7; }
 }
-.message.user{background:var(--bubble-user)}
-.avatar{
-  width:32px;height:32px;border-radius:8px;background:var(--accent);
-  display:flex;align-items:center;justify-content:center;font-weight:700;color:white;flex-shrink:0
+.header h1 {
+  font-size: 20px;
+  font-weight: 600;
+  margin: 0;
+  background: linear-gradient(135deg, var(--accent), var(--accent-hover));
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
 }
-.role{font-weight:600;margin-bottom:4px;color:var(--muted)}
-
-/* --- Texto mais compacto nas respostas --- */
-.content{ white-space:pre-wrap; line-height:1.32; font-size:15px; }
-.content p{ margin:.22rem 0; }
-.content ul, .content ol{ margin:.25rem 0 .25rem 1.15rem; }
-.content li{ margin:.10rem 0; }
-.content li p{ margin:.18rem 0; }
-.content li > ul, .content li > ol{ margin:.18rem 0 .18rem 1.1rem; }
-.content h1, .content h2, .content h3{ margin:.5rem 0 .3rem; line-height:1.18; }
-
-.panel-bottom{
-  position:sticky;bottom:0;z-index:10;
-  backdrop-filter:blur(10px);
-  background:linear-gradient(180deg,rgba(0,0,0,0), var(--bg) 30%, var(--bg));
-  border-top:1px solid var(--border);
-  padding:14px 0 calc(18px + env(safe-area-inset-bottom));
+.header .subtitle {
+  font-size: 12px;
+  color: var(--muted);
+  margin-top: 2px;
 }
-.composer{
-  max-width:100%; width:100%;
-  margin:0 auto; padding:0 var(--padX);
-  display:flex;gap:16px;align-items:flex-end;
-}
-.composer .left{
-  flex:1; display:flex; flex-direction:column; gap:12px;
+.header .controls {
+  display: flex;
+  gap: 12px;
+  align-items: center;
 }
 
-textarea.form-control#prompt{
-  width:100% !important;
-  background:#40414F; color:#ECECF1;
-  border:1px solid #6b6f76;
-  border-radius:14px; padding:20px 20px;
-  min-height:200px; max-height:65vh; resize:vertical;
-  font-size:16px; line-height:1.45;
-  box-shadow:none;
+/* Status badge */
+.status-badge {
+  padding: 6px 12px;
+  border-radius: 20px;
+  font-size: 13px;
+  font-weight: 500;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: var(--bubble-assistant);
+  border: 1px solid var(--border);
 }
-textarea.form-control#prompt::placeholder{color:#c5c7d0;opacity:.95}
-textarea.form-control#prompt:focus{
-  border-color:#19C37D; outline:none;
-  box-shadow:0 0 0 3px rgba(25,195,125,.18);
-}
-[data-theme='light'] textarea.form-control#prompt{
-  background:#fff; color:var(--text); border:1px solid var(--border);
-}
-[data-theme='light'] textarea.form-control#prompt::placeholder{color:#6B7280}
+.status-badge.ready { color: #10b981; }
+.status-badge.warning { color: #f59e0b; }
+.status-badge.error { color: #ef4444; }
 
-select.form-select{
-  background:var(--panel); color:var(--text); border:1px solid var(--border);
-  border-radius:12px; height:48px;
+/* Knowledge base */
+.kb-section {
+  padding: 16px 24px;
+  background: var(--panel);
+  border-bottom: 1px solid var(--border);
 }
-.btn-primary{
-  background:var(--accent); border-color:var(--accent);
-  height:52px; padding:0 22px; border-radius:12px; font-weight:600
+.kb-card {
+  background: var(--bubble-assistant);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 16px;
+  box-shadow: var(--shadow);
 }
-.btn-primary:hover{filter:brightness(.95)}
-.badge-ok{color:#10b981}.badge-warn{color:#f59e0b}.badge-err{color:#ef4444}
+.kb-card h3 {
+  font-size: 16px;
+  font-weight: 600;
+  margin-bottom: 12px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.kb-info {
+  font-size: 13px;
+  color: var(--muted);
+  margin-top: 8px;
+  padding: 8px;
+  background: var(--bg);
+  border-radius: 6px;
+}
 
+/* Chat area */
+.chat-wrapper {
+  flex: 1;
+  overflow-y: auto;
+  padding: 24px;
+  scroll-behavior: smooth;
+}
+.chat-container {
+  max-width: 900px;
+  margin: 0 auto;
+}
+
+/* Messages */
+.message {
+  display: flex;
+  gap: 16px;
+  margin-bottom: 24px;
+  animation: fadeIn 0.3s ease;
+}
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.message.user {
+  flex-direction: row-reverse;
+}
+
+.avatar {
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 600;
+  font-size: 14px;
+  flex-shrink: 0;
+  box-shadow: var(--shadow);
+}
+.message.assistant .avatar {
+  background: linear-gradient(135deg, var(--accent), var(--accent-hover));
+  color: white;
+}
+.message.user .avatar {
+  background: linear-gradient(135deg, #667EEA, #764BA2);
+  color: white;
+}
+
+.message-content {
+  flex: 1;
+  max-width: 75%;
+}
+.message.user .message-content {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+}
+
+.bubble {
+  background: var(--bubble-assistant);
+  border: 1px solid var(--border);
+  border-radius: 18px;
+  padding: 12px 16px;
+  box-shadow: var(--shadow);
+}
+.message.user .bubble {
+  background: var(--bubble-user);
+}
+
+.role {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--muted);
+  margin-bottom: 4px;
+}
+.message.user .role {
+  text-align: right;
+}
+
+/* ESPAÇAMENTO MELHORADO */
+.content {
+  font-size: 15px;
+  line-height: 1.6;
+  color: var(--text);
+}
+.content p {
+  margin: 0.6rem 0;
+}
+.content p:first-child {
+  margin-top: 0;
+}
+.content p:last-child {
+  margin-bottom: 0;
+}
+.content ul, .content ol {
+  margin: 0.8rem 0;
+  padding-left: 1.5rem;
+}
+.content li {
+  margin: 0.4rem 0;
+  line-height: 1.6;
+}
+.content h1, .content h2, .content h3 {
+  margin: 1rem 0 0.5rem;
+  font-weight: 600;
+  line-height: 1.3;
+}
+.content h1 { font-size: 1.5rem; }
+.content h2 { font-size: 1.3rem; }
+.content h3 { font-size: 1.1rem; }
+.content code {
+  background: var(--bg);
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-size: 0.9em;
+  font-family: 'Monaco', 'Menlo', monospace;
+}
+.content pre {
+  background: var(--bg);
+  padding: 12px;
+  border-radius: 8px;
+  overflow-x: auto;
+  margin: 0.8rem 0;
+}
+.content blockquote {
+  border-left: 3px solid var(--accent);
+  padding-left: 16px;
+  margin: 0.8rem 0;
+  color: var(--muted);
+}
+.content hr {
+  border: none;
+  border-top: 1px solid var(--border);
+  margin: 1rem 0;
+}
+.content a {
+  color: var(--accent);
+  text-decoration: none;
+  border-bottom: 1px solid transparent;
+  transition: border-color 0.2s;
+}
+.content a:hover {
+  border-bottom-color: var(--accent);
+}
+.content strong {
+  font-weight: 600;
+}
+
+/* Typing indicator */
+.typing-indicator {
+  display: flex;
+  gap: 4px;
+  padding: 8px;
+}
+.typing-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--muted);
+  animation: typing 1.4s infinite;
+}
+.typing-dot:nth-child(2) { animation-delay: 0.2s; }
+.typing-dot:nth-child(3) { animation-delay: 0.4s; }
+@keyframes typing {
+  0%, 60%, 100% { opacity: 0.3; }
+  30% { opacity: 1; }
+}
+
+/* Composer */
+.composer-wrapper {
+  background: var(--panel);
+  border-top: 1px solid var(--border);
+  padding: 20px 24px;
+  box-shadow: 0 -2px 10px rgba(0,0,0,0.1);
+}
+.composer {
+  max-width: 900px;
+  margin: 0 auto;
+  display: flex;
+  gap: 16px;
+  align-items: flex-end;
+}
+.input-group {
+  flex: 1;
+}
+
+/* Textarea */
+textarea.form-control {
+  width: 100%;
+  background: var(--bg);
+  color: var(--text);
+  border: 2px solid var(--border);
+  border-radius: 12px;
+  padding: 14px 16px;
+  min-height: 80px;
+  max-height: 200px;
+  resize: vertical;
+  font-size: 15px;
+  line-height: 1.5;
+  transition: all 0.2s ease;
+  font-family: inherit;
+}
+textarea.form-control:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px rgba(25,195,125,0.1);
+}
+textarea.form-control::placeholder {
+  color: var(--muted);
+  opacity: 0.7;
+}
+
+/* Controls */
+.controls-row {
+  display: flex;
+  gap: 12px;
+  margin-top: 12px;
+  align-items: center;
+}
+
+select.form-select {
+  flex: 1;
+  background: var(--bg);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px 12px;
+  font-size: 14px;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+select.form-select:hover {
+  border-color: var(--accent);
+}
+select.form-select:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+/* Buttons */
+.btn {
+  padding: 8px 20px;
+  border-radius: 8px;
+  border: none;
+  font-weight: 500;
+  font-size: 14px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.btn-primary {
+  background: linear-gradient(135deg, var(--accent), var(--accent-hover));
+  color: white;
+  min-width: 100px;
+  height: 48px;
+  font-size: 15px;
+}
+.btn-primary:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(25,195,125,0.3);
+}
+.btn-primary:active {
+  transform: translateY(0);
+}
+.btn-secondary {
+  background: var(--bubble-assistant);
+  color: var(--text);
+  border: 1px solid var(--border);
+}
+.btn-secondary:hover {
+  background: var(--bg);
+}
+
+/* Responsive */
+@media (max-width: 768px) {
+  .header { padding: 12px 16px; }
+  .header h1 { font-size: 18px; }
+  .chat-wrapper { padding: 16px; }
+  .message-content { max-width: 85%; }
+  .composer-wrapper { padding: 16px; }
+  .composer { flex-direction: column; align-items: stretch; }
+  .btn-primary { width: 100%; }
+}
 """
-
 
 app_ui = ui.page_fluid(
     ui.tags.style(CSS),
-    # theme handler
-    ui.tags.script("""      Shiny.addCustomMessageHandler('set_theme', (theme) => {
+    ui.tags.script("""
+      Shiny.addCustomMessageHandler('set_theme', (theme) => {
         document.documentElement.setAttribute('data-theme', theme);
         try { localStorage.setItem('osa-theme', theme); } catch(e){}
       });
@@ -447,44 +739,77 @@ app_ui = ui.page_fluid(
         Shiny.setInputValue('theme', saved, {priority:'event'});
       })();
     """),
-    ui.div(
-        {"class":"header"},
-        ui.div({"class":"left"},
-               ui.h3("🚀 Origin Software Assistant"),
-               ui.p({"class":"sub"}, "Chat + RAG (PDFs) com fallback automático para Claude • Cache S3/R2")),
-        ui.div({"class":"right"},
-               ui.input_select("theme", None, {"dark":"🌙 Escuro","light":"☀️ Claro"}, selected="dark"),
-               ui.tags.span({"class":"badge"}, ui.output_text("status", inline=True)),
-        ),
-    ),
-    ui.div({"class":"kb"},
-        ui.card(
-            ui.card_header("📚 Base de conhecimento (PDF → índice TF-IDF)"),
-            ui.input_file("docs", "Adicionar PDF(s)", multiple=True, accept=[".pdf"]),
-            ui.output_text("kb_status")
-        )
-    ),
-    ui.div({"class":"chat-container"}, ui.output_ui("chat_thread")),
-    ui.panel_fixed(
-        ui.div({"class":"panel-bottom", "style":"padding:0"},
-            ui.div({"class":"composer"},
-                ui.div({"class":"left"},
-                    ui.input_text_area("prompt", None, rows=5,
-                        placeholder="Envie uma mensagem… (Shift+Enter = quebra de linha)"),
-                    ui.row(
-                        ui.column(8,
-                            ui.input_select("model", None, {
-                                "claude-3-haiku-20240307":"Claude 3 Haiku (econômico)",
-                                "claude-3-5-sonnet-20240620":"Claude 3.5 Sonnet (qualidade)"
-                            }, selected="claude-3-haiku-20240307")
-                        ),
-                        ui.column(4, ui.input_action_button("clear","Limpar"))
-                    ),
-                ),
-                ui.input_action_button("send","Enviar", class_="btn btn-primary"),
+    
+    ui.div({"class": "app-container"},
+        # Header
+        ui.div({"class": "header"},
+            ui.div({"class": "logo-section"},
+                ui.span({"class": "logo"}, "🚀"),
+                ui.div(
+                    ui.h1("Origin Software Assistant"),
+                    ui.div({"class": "subtitle"}, "Chat inteligente com RAG • Powered by Claude")
+                )
+            ),
+            ui.div({"class": "controls"},
+                ui.output_ui("status_badge"),
+                ui.input_select("theme", None, 
+                    {"dark": "🌙 Escuro", "light": "☀️ Claro"}, 
+                    selected="dark",
+                    width="auto"
+                )
             )
         ),
-        left="0", right="0", bottom="0"
+        
+        # Knowledge Base
+        ui.div({"class": "kb-section"},
+            ui.div({"class": "kb-card"},
+                ui.h3("📚 Base de Conhecimento"),
+                ui.input_file("docs", "Adicionar PDFs", 
+                    multiple=True, 
+                    accept=[".pdf"],
+                    width="auto"
+                ),
+                ui.div({"class": "kb-info"},
+                    ui.output_text("kb_status")
+                )
+            )
+        ),
+        
+        # Chat
+        ui.div({"class": "chat-wrapper"},
+            ui.div({"class": "chat-container"},
+                ui.output_ui("chat_thread")
+            )
+        ),
+        
+        # Composer
+        ui.div({"class": "composer-wrapper"},
+            ui.div({"class": "composer"},
+                ui.div({"class": "input-group"},
+                    ui.input_text_area("prompt", None, 
+                        placeholder="Digite sua mensagem... (Shift+Enter para nova linha)",
+                        rows=3,
+                        width="100%"
+                    ),
+                    ui.div({"class": "controls-row"},
+                        ui.input_select("model", None, 
+                            {
+                                "claude-3-haiku-20240307": "⚡ Claude 3 Haiku (rápido)",
+                                "claude-3-5-sonnet-20240620": "✨ Claude 3.5 Sonnet (avançado)"
+                            }, 
+                            selected="claude-3-haiku-20240307",
+                            width="auto"
+                        ),
+                        ui.input_action_button("clear", "🗑️ Limpar", 
+                            class_="btn btn-secondary"
+                        )
+                    )
+                ),
+                ui.input_action_button("send", "Enviar →", 
+                    class_="btn btn-primary"
+                )
+            )
+        )
     )
 )
 
@@ -495,126 +820,219 @@ def server(input, output, session):
     def push(role, content):
         history.set(history() + [{"role": role, "content": content}])
 
-    @render.text
-    def status():
+    @render.ui
+    def status_badge():
         if HAS_KEY and client is not None:
-            return "✅ Claude pronto"
+            return ui.div({"class": "status-badge ready"}, 
+                "●", " Claude pronto"
+            )
         elif HAS_KEY and client is None and Anthropic is None:
-            return "⚠️ Falta instalar 'anthropic'"
+            return ui.div({"class": "status-badge warning"}, 
+                "●", " Falta 'anthropic'"
+            )
         else:
-            return "❌ Sem ANTHROPIC_API_KEY"
+            return ui.div({"class": "status-badge error"}, 
+                "●", " Sem API Key"
+            )
 
     @render.text
     def kb_status():
         if not HAVE_RAG_DEPS:
-            return "RAG indisponível: instale pypdf, scikit-learn e joblib."
+            return "⚠️ RAG indisponível: instale pypdf, scikit-learn e joblib"
         chunks, _, _ = load_index()
         n_docs = len({c["source"] for c in chunks}) if chunks else 0
         n_chunks = len(chunks)
-        tip = " • S3 ativo" if _S3 else ""
-        fb = f" • FB:{RAG_FALLBACK}({RAG_MIN_TOPSCORE}/{RAG_MIN_CTXCHARS})"
-        return f"📄 {n_docs} PDF(s) • 🧩 {n_chunks} chunk(s){tip}{fb}"
+        
+        status_parts = [f"📄 {n_docs} documento(s)", f"🧩 {n_chunks} fragmento(s)"]
+        
+        if _S3:
+            status_parts.append("☁️ Sincronização S3 ativa")
+        
+        if RAG_FALLBACK != "off":
+            status_parts.append(f"🔄 Fallback: {RAG_MIN_TOPSCORE:.2f}/{RAG_MIN_CTXCHARS}")
+            
+        return " • ".join(status_parts)
 
     @render.ui
     def chat_thread():
         items = []
         for m in history():
-            cls = "assistant" if m["role"] == "assistant" else "user"
-            avatar = "OA" if m["role"] == "assistant" else "Você"
+            is_assistant = m["role"] == "assistant"
+            
             items.append(
                 ui.div(
-                    {"class": f"message {cls}"},
-                    ui.div({"class":"avatar"}, avatar[0]),
-                    ui.div(
-                        ui.div({"class":"role"}, "Origin Assistant" if m["role"]=="assistant" else "Você"),
-                        ui.div({"class":"content"}, ui.markdown(m["content"])),
+                    {"class": f"message {'assistant' if is_assistant else 'user'}"},
+                    ui.div({"class": "avatar"}, 
+                        "OA" if is_assistant else "V"
+                    ),
+                    ui.div({"class": "message-content"},
+                        ui.div({"class": "role"}, 
+                            "Origin Assistant" if is_assistant else "Você"
+                        ),
+                        ui.div({"class": "bubble"},
+                            ui.div({"class": "content"}, 
+                                ui.markdown(m["content"])
+                            )
+                        )
                     )
                 )
             )
+        
+        # Typing indicator
         if typing():
             items.append(
-                ui.div({"class":"message assistant"},
-                       ui.div({"class":"avatar"}, "OA"),
-                       ui.div(ui.div({"class":"role"},"Origin Assistant"),
-                              ui.div({"class":"content"},"Digitando… ⏳")))
+                ui.div({"class": "message assistant"},
+                    ui.div({"class": "avatar"}, "OA"),
+                    ui.div({"class": "message-content"},
+                        ui.div({"class": "role"}, "Origin Assistant"),
+                        ui.div({"class": "bubble"},
+                            ui.div({"class": "typing-indicator"},
+                                ui.div({"class": "typing-dot"}),
+                                ui.div({"class": "typing-dot"}),
+                                ui.div({"class": "typing-dot"})
+                            )
+                        )
+                    )
+                )
             )
-        return ui.TagList(*items)
+        
+        return ui.TagList(*items) if items else ui.div(
+            {"style": "text-align: center; color: var(--muted); padding: 40px;"},
+            "💬 Inicie uma conversa enviando uma mensagem"
+        )
 
     @reactive.Effect
     @reactive.event(input.clear)
     def _clear():
         history.set([])
         ui.update_text_area("prompt", value="")
+        ui.notification_show("Chat limpo com sucesso", type="message", duration=2)
 
-    # Tema (Shiny 1.4 exige await)
+    # Theme handler
     @reactive.Effect
     async def _theme_apply():
         theme = input.theme() or "dark"
         await session.send_custom_message("set_theme", theme)
 
-    # atalhos + autoscroll
-    ui.tags.script("""        document.addEventListener('keydown', (e)=>{
-          if(e.target.id==='prompt' && e.key==='Enter' && !e.shiftKey){
-            e.preventDefault();
-            document.getElementById('send').click();
-          }
+    # Keyboard shortcuts and auto-scroll
+    ui.tags.script("""
+        // Enter to send (Shift+Enter for new line)
+        document.addEventListener('keydown', (e) => {
+            if(e.target.id === 'prompt' && e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                document.getElementById('send').click();
+            }
         });
-        new MutationObserver(()=>{
-          const el=document.querySelector('.chat-container');
-          if(el) el.scrollTop = el.scrollHeight;
-        }).observe(document.body,{childList:true,subtree:true});
-    """    )
-
-    # auto-grow suave do textarea
-    ui.tags.script("""      const grow = el => {
-        if (!el) return;
-        el.style.height = 'auto';
-        const h = Math.min(el.scrollHeight, window.innerHeight * 0.4);
-        el.style.height = h + 'px';
-      };
-      const promptEl = () => document.getElementById('prompt');
-      document.addEventListener('input', (e) => {
-        if (e.target && e.target.id === 'prompt') grow(e.target);
-      });
-      const obs = new MutationObserver(() => grow(promptEl()));
-      obs.observe(document.body, {childList:true, subtree:true});
+        
+        // Auto-scroll to bottom on new messages
+        const scrollToBottom = () => {
+            const wrapper = document.querySelector('.chat-wrapper');
+            if(wrapper) {
+                setTimeout(() => {
+                    wrapper.scrollTop = wrapper.scrollHeight;
+                }, 100);
+            }
+        };
+        
+        // Observer for new messages
+        new MutationObserver(scrollToBottom).observe(
+            document.body, 
+            {childList: true, subtree: true}
+        );
+        
+        // Auto-resize textarea
+        const autoResize = (el) => {
+            if (!el) return;
+            el.style.height = 'auto';
+            const newHeight = Math.min(el.scrollHeight, 200);
+            el.style.height = newHeight + 'px';
+        };
+        
+        document.addEventListener('input', (e) => {
+            if (e.target && e.target.id === 'prompt') {
+                autoResize(e.target);
+            }
+        });
+        
+        // Initial resize
+        setTimeout(() => {
+            const promptEl = document.getElementById('prompt');
+            if(promptEl) autoResize(promptEl);
+        }, 500);
     """)
 
     @reactive.Effect
     @reactive.event(input.docs)
     def _ingest_pdfs():
         if not HAVE_RAG_DEPS:
-            ui.notification_show("Instale pypdf, scikit-learn e joblib para ativar o RAG.", type="error")
+            ui.notification_show(
+                "⚠️ Instale pypdf, scikit-learn e joblib para ativar o RAG", 
+                type="error",
+                duration=5
+            )
             return
+        
         files = input.docs() or []
-        if not files: return
+        if not files:
+            return
+        
         paths = []
         for f in files:
             src = Path(f["datapath"])
             dst = DATA_DIR / f["name"]
             dst.write_bytes(src.read_bytes())
             paths.append(dst)
+        
         total = add_pdfs_to_index(paths)
-        ok = s3_push_cache() if _S3 else False
-        msg = f"PDF(s) adicionados. Total de chunks: {total}" + (" • sincronizado com S3" if ok else "")
-        ui.notification_show(msg, type="message")
+        
+        if _S3:
+            ok = s3_push_cache()
+            if ok:
+                ui.notification_show(
+                    f"✅ {len(files)} PDF(s) processados • Total: {total} fragmentos • Sincronizado com S3",
+                    type="success",
+                    duration=4
+                )
+            else:
+                ui.notification_show(
+                    f"✅ {len(files)} PDF(s) processados • Total: {total} fragmentos",
+                    type="success",
+                    duration=4
+                )
+        else:
+            ui.notification_show(
+                f"✅ {len(files)} PDF(s) processados • Total: {total} fragmentos",
+                type="success",
+                duration=4
+            )
 
     @reactive.Effect
     @reactive.event(input.send)
     def _send():
         q = (input.prompt() or "").strip()
         if not q:
-            ui.notification_show("Digite sua mensagem.", type="warning")
+            ui.notification_show("⚠️ Digite uma mensagem", type="warning", duration=2)
             return
+        
         push("user", q)
         ui.update_text_area("prompt", value="")
+        
         if client is None:
-            push("assistant", "Claude indisponível. Verifique ANTHROPIC_API_KEY e o pacote 'anthropic'.")
+            push("assistant", 
+                "⚠️ Claude indisponível. Configure ANTHROPIC_API_KEY e instale o pacote 'anthropic'."
+            )
             return
+        
         typing.set(True)
-        model = (input.model() or "claude-3-haiku-20240307")
-        reply = chat_reply_with_context(history(), model)
-        typing.set(False)
+        model = input.model() or "claude-3-haiku-20240307"
+        
+        try:
+            reply = chat_reply_with_context(history(), model)
+        except Exception as e:
+            reply = f"❌ Erro ao processar: {str(e)}"
+        finally:
+            typing.set(False)
+        
         push("assistant", reply)
 
 app = App(app_ui, server)
