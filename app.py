@@ -1,7 +1,5 @@
 # app.py — Shiny (Python) chat + RAG de PDFs com persistência S3 (Cloudflare R2) e FALLBACK automático para Claude
-# - Usa TF-IDF para recuperar trechos de PDFs
-# - Se o contexto estiver fraco/insuficiente, faz 2ª chamada ao Claude SEM contexto (conhecimento geral)
-# - Persistência no R2 via S3 API (S3_* envs)
+# Aparência atualizada (modo escuro estilo ChatGPT) + caixa de texto maior com auto-grow
 #
 # ENV necessárias no Posit Connect (Settings → Environment):
 #   ANTHROPIC_API_KEY
@@ -10,13 +8,11 @@
 #   AWS_ACCESS_KEY_ID=<Access Key ID>
 #   AWS_SECRET_ACCESS_KEY=<Secret Access Key>
 #   AWS_DEFAULT_REGION=auto        # opcional
-#   S3_PREFIX=osa-cache/           # opcional (recomendado; terminar com '/')
+#   S3_PREFIX=osa-cache/           # opcional (terminar com '/')
 #
-#   # Fallback de RAG (opcionais — já possuem default):
 #   RAG_FALLBACK=auto              # auto | off
 #   RAG_MIN_TOPSCORE=0.18          # limiar do score da 1ª evidência (0–1)
 #   RAG_MIN_CTXCHARS=300           # mínimo de caracteres do contexto
-#
 from shiny import App, ui, render, reactive
 from dotenv import load_dotenv
 import os, re, json, hashlib
@@ -94,12 +90,10 @@ def _s3_conf():
     key = os.getenv("AWS_ACCESS_KEY_ID")
     secret = os.getenv("AWS_SECRET_ACCESS_KEY")
     prefix = os.getenv("S3_PREFIX", "osa-cache/")
-    # normaliza prefixo
     if prefix and not prefix.endswith('/'):
         prefix = prefix + '/'
     if not (endpoint and bucket and key and secret):
         return None
-    # region (auto -> None)
     region = os.getenv("AWS_DEFAULT_REGION")
     if region and region.lower() == "auto":
         region = None
@@ -125,7 +119,6 @@ def _key(name: str) -> str:
 def s3_pull_cache_if_needed():
     if not _S3:
         return False
-    # se já existe local, não baixa
     if CHUNKS_JSON.exists() and VECTORIZER_JOBLIB.exists() and MATRIX_JOBLIB.exists():
         print("[S3] cache local presente.")
         return False
@@ -172,7 +165,6 @@ def s3_push_cache():
             print(f"[S3] erro ao enviar {local}: {e}")
     return ok_all
 
-# tenta restaurar do S3 na inicialização
 try:
     s3_pull_cache_if_needed()
 except Exception as e:
@@ -197,7 +189,6 @@ def chunk_text(text: str, max_chars=900, overlap=220):
     return [c for c in chunks if c.strip()]
 
 def load_index():
-    # primeiro tenta baixar do S3 (se habilitado)
     if _S3:
         s3_pull_cache_if_needed()
     if CHUNKS_JSON.exists() and VECTORIZER_JOBLIB.exists() and MATRIX_JOBLIB.exists():
@@ -211,7 +202,6 @@ def save_index(chunks, vectorizer, matrix):
     CHUNKS_JSON.write_text(json.dumps(chunks, ensure_ascii=False), encoding="utf-8")
     dump(vectorizer, VECTORIZER_JOBLIB)
     dump(matrix, MATRIX_JOBLIB)
-    # sincroniza com S3
     if _S3:
         s3_push_cache()
 
@@ -326,34 +316,84 @@ def chat_reply_with_context(history, model):
 
 # ---------------- CSS / UI ----------------
 CSS = """:root{
-  --bg:#f8fafc; --panel:#ffffff; --bubble-user:#f3f4f6; --bubble-assistant:#eef2ff;
-  --border:#e5e7eb; --text:#0f172a; --muted:#475569; --accent:#7c3aed;
+  /* Light */
+  --bg:#F7F7F8; --panel:#FFFFFF;
+  --bubble-user:#F2F2F2; --bubble-assistant:#F7F7F8;
+  --border:#E2E2E3; --text:#0F172A; --muted:#6B7280;
+  --accent:#10A37F; /* ChatGPT green */
 }
+
+/* ChatGPT Dark */
 [data-theme='dark']{
-  --bg:#0b1220; --panel:#0f172a; --bubble-user:#111827; --bubble-assistant:#0b1320;
-  --border:#1f2937; --text:#e5e7eb; --muted:#9ca3af; --accent:#8b5cf6;
+  --bg:#343541; --panel:#343541;
+  --bubble-user:#444654; --bubble-assistant:#3E3F4A;
+  --border:#565869; --text:#ECECF1; --muted:#ACB2BF;
+  --accent:#19C37D;
 }
+
 html,body{height:100%}
-body{background:linear-gradient(180deg,var(--bg),var(--panel) 55%,var(--bg));color:var(--text);}
+body{
+  background:linear-gradient(180deg,var(--bg),var(--panel) 55%,var(--bg));
+  color:var(--text);
+}
 a{color:var(--accent)}
+
 .header{max-width:980px;margin:18px auto 0;padding:8px 16px;display:flex;align-items:center;gap:8px;justify-content:space-between}
 .header .left h3{font-weight:700;margin:0}
 .header .sub{color:var(--muted);margin:2px 0 0 0}
 .header .right{display:flex;gap:8px;align-items:center}
 .badge{font-size:.9rem;color:var(--muted)}
+
 .kb{max-width:980px;margin:10px auto;padding:0 16px}
-.chat-container{max-width:980px;margin:0 auto;padding:8px 16px 120px}
-.message{display:flex;gap:12px;padding:14px 16px;border-radius:16px;margin:10px 0;border:1px solid var(--border);background:var(--bubble-assistant)}
+
+/* Mais espaço no rodapé para a barra fixa */
+.chat-container{max-width:980px;margin:0 auto;padding:8px 16px 200px}
+
+.message{
+  display:flex;gap:12px;padding:14px 16px;border-radius:16px;margin:10px 0;
+  border:1px solid var(--border);background:var(--bubble-assistant)
+}
 .message.user{background:var(--bubble-user)}
-.avatar{width:32px;height:32px;border-radius:8px;background:var(--accent);display:flex;align-items:center;justify-content:center;font-weight:700;color:white;flex-shrink:0}
+.avatar{
+  width:32px;height:32px;border-radius:8px;background:var(--accent);
+  display:flex;align-items:center;justify-content:center;font-weight:700;color:white;flex-shrink:0
+}
 .role{font-weight:600;margin-bottom:4px;color:var(--muted)}
-.content{white-space:pre-wrap;line-height:1.5}
-.panel-bottom{backdrop-filter:blur(10px); background:color-mix(in oklab, var(--bg) 70%, var(--panel)); border-top:1px solid var(--border); padding:12px}
-.composer{max-width:980px;margin:0 auto;display:flex;gap:10px;align-items:flex-end}
+.content{white-space:pre-wrap;line-height:1.55;font-size:15px}
+
+/* Barra fixa estilo ChatGPT */
+.panel-bottom{
+  position:sticky;bottom:0;z-index:10;
+  backdrop-filter:blur(10px);
+  background:linear-gradient(180deg,rgba(0,0,0,0), var(--bg) 30%, var(--bg));
+  border-top:1px solid var(--border);
+  padding:14px 0 calc(14px + env(safe-area-inset-bottom));
+}
+.composer{max-width:980px;margin:0 auto;display:flex;gap:12px;align-items:flex-end}
 .composer .left{flex:1}
-textarea.form-control{background:var(--panel);color:var(--text);border:1px solid var(--border);}
-select.form-select{background:var(--panel);color:var(--text);border:1px solid var(--border);}
-.btn-primary{background:var(--accent);border-color:var(--accent)}
+
+/* Textarea maior + auto-grow + look ChatGPT */
+textarea.form-control#prompt{
+  background:#40414F; color:#ECECF1;
+  border:1px solid #565869;
+  border-radius:14px; padding:14px 14px;
+  min-height:72px; max-height:40vh; resize:vertical;
+  font-size:16px; line-height:1.35;
+}
+[data-theme='light'] textarea.form-control#prompt{
+  background:#fff; color:var(--text); border:1px solid var(--border);
+}
+
+/* Select e botões no mesmo tema */
+select.form-select{
+  background:var(--panel); color:var(--text); border:1px solid var(--border);
+  border-radius:12px; height:40px;
+}
+.btn-primary{
+  background:var(--accent); border-color:var(--accent);
+  padding:10px 16px; border-radius:12px; font-weight:600
+}
+.btn-primary:hover{filter:brightness(.95)}
 .badge-ok{color:#10b981}.badge-warn{color:#f59e0b}.badge-err{color:#ef4444}
 """
 
@@ -396,8 +436,8 @@ app_ui = ui.page_fluid(
         ui.div({"class":"panel-bottom", "style":"padding:0"},
             ui.div({"class":"composer"},
                 ui.div({"class":"left"},
-                    ui.input_text_area("prompt", None, rows=3,
-                                       placeholder="Envie uma mensagem… (Shift+Enter = quebra de linha)"),
+                    ui.input_text_area("prompt", None, rows=5,
+                        placeholder="Envie uma mensagem… (Shift+Enter = quebra de linha)"),
                     ui.row(
                         ui.column(8,
                             ui.input_select("model", None, {
@@ -492,6 +532,21 @@ def server(input, output, session):
         }).observe(document.body,{childList:true,subtree:true});
     """    )
 
+    # auto-grow suave do textarea
+    ui.tags.script("""      const grow = el => {
+        if (!el) return;
+        el.style.height = 'auto';
+        const h = Math.min(el.scrollHeight, window.innerHeight * 0.4);
+        el.style.height = h + 'px';
+      };
+      const promptEl = () => document.getElementById('prompt');
+      document.addEventListener('input', (e) => {
+        if (e.target && e.target.id === 'prompt') grow(e.target);
+      });
+      const obs = new MutationObserver(() => grow(promptEl()));
+      obs.observe(document.body, {childList:true, subtree:true});
+    """)
+
     @reactive.Effect
     @reactive.event(input.docs)
     def _ingest_pdfs():
@@ -530,5 +585,6 @@ def server(input, output, session):
         push("assistant", reply)
 
 app = App(app_ui, server)
+
 
 
