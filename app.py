@@ -373,11 +373,13 @@ a{color:var(--accent)}
 .role{font-weight:600;margin-bottom:4px;color:var(--muted)}
 
 /* --- Texto mais compacto nas respostas --- */
-.content{ white-space:pre-wrap; line-height:1.36; font-size:15px; }
-.content p{ margin:.30rem 0; }
-.content ul, .content ol{ margin:.30rem 0 .30rem 1.2rem; }
-.content li{ margin:.14rem 0; }
-.content h1, .content h2, .content h3{ margin:.55rem 0 .35rem; line-height:1.22; }
+.content{ white-space:pre-wrap; line-height:1.32; font-size:15px; }
+.content p{ margin:.22rem 0; }
+.content ul, .content ol{ margin:.25rem 0 .25rem 1.15rem; }
+.content li{ margin:.10rem 0; }
+.content li p{ margin:.18rem 0; }
+.content li > ul, .content li > ol{ margin:.18rem 0 .18rem 1.1rem; }
+.content h1, .content h2, .content h3{ margin:.5rem 0 .3rem; line-height:1.18; }
 
 .panel-bottom{
   position:sticky;bottom:0;z-index:10;
@@ -616,6 +618,7 @@ def server(input, output, session):
         push("assistant", reply)
 
 app = App(app_ui, server)
+
 
 
 
