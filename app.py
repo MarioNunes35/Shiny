@@ -835,6 +835,141 @@ def server(input: Inputs, output: Outputs, session: Session):
     
     @output
     @render.ui
+    def main_content():
+        """Renderiza login ou app principal"""
+        if not authenticated():
+            # LOGIN PAGE
+            return ui.div({"class": "login-container"},
+                ui.div({"class": "login-card"},
+                    ui.div({"class": "login-header"},
+                        ui.h1({"class": "login-title"}, "🚀 Origin Software Assistant"),
+                        ui.p({"class": "login-subtitle"}, "Sistema especializado em OriginPro")
+                    ),
+                    
+                    ui.output_ui("login_feedback"),
+                    
+                    ui.div({"class": "form-group"},
+                        ui.span({"class": "form-label"}, "Usuário"),
+                        ui.input_text("username", None, placeholder="Digite seu usuário")
+                    ),
+                    
+                    ui.div({"class": "form-group"},
+                        ui.span({"class": "form-label"}, "Senha"),
+                        ui.input_password("password", None, placeholder="Digite sua senha")
+                    ),
+                    
+                    ui.input_action_button("login_btn", "Entrar", class_="btn btn-primary", style="width: 100%;"),
+                    
+                    ui.hr({"style": "margin: 20px 0; border-color: #2a2a2a;"}),
+                    
+                    ui.div({"style": "text-align: center; color: #666; font-size: 13px;"},
+                        "Credenciais demo: admin / admin123"
+                    )
+                )
+            )
+        else:
+            # APP PRINCIPAL COM SIDEBAR
+            return ui.TagList(
+                # Sidebar estilo Claude Code UI
+                ui.div({"class": "sidebar"},
+                    ui.div({"class": "sidebar-header"},
+                        ui.div({"class": "sidebar-title"},
+                            "🚀 Origin Assistant"
+                        ),
+                        ui.div({"style": "font-size: 12px; color: #666; margin-top: 4px;"},
+                            f"Usuário: {current_user()}"
+                        )
+                    ),
+                    
+                    ui.div({"class": "sessions-list"},
+                        ui.div({"class": "session-item active"},
+                            "💬 Conversa atual"
+                        )
+                    ),
+                    
+                    ui.input_action_button("clear_chat", "➕ Nova Conversa",
+                        class_="new-session-btn"
+                    )
+                ),
+                
+                # Main Content Area
+                ui.div({"class": "main-content"},
+                    # Header Bar
+                    ui.div({"class": "header-bar"},
+                        ui.div({"class": "header-title"},
+                            "📊 Especialista em OriginPro"
+                        ),
+                        ui.div({"class": "header-actions"},
+                            ui.input_action_button("logout_btn", "Logout",
+                                class_="btn btn-logout"
+                            ) if not is_admin() else ui.TagList(
+                                ui.input_action_button("show_admin", "Admin",
+                                    class_="btn btn-logout"
+                                ),
+                                ui.input_action_button("logout_btn", "Logout",
+                                    class_="btn btn-logout"
+                                )
+                            )
+                        )
+                    ),
+                    
+                    # Knowledge Base Section
+                    ui.div({"class": "kb-section"},
+                        ui.row(
+                            ui.column(8,
+                                ui.input_file("docs", "📚 Adicionar documentação do OriginPro (PDFs)", 
+                                    multiple=True, 
+                                    accept=[".pdf"]
+                                )
+                            ),
+                            ui.column(4,
+                                ui.div({"class": "kb-info"},
+                                    ui.output_text("kb_status")
+                                )
+                            )
+                        )
+                    ),
+                    
+                    # Admin Panel (condicional)
+                    ui.output_ui("admin_panel"),
+                    
+                    # Chat Area
+                    ui.div({"class": "chat-area"},
+                        ui.div({"class": "chat-container"},
+                            ui.output_ui("chat_thread")
+                        )
+                    ),
+                    
+                    # Composer
+                    ui.div({"class": "composer"},
+                        ui.div({"class": "composer-inner"},
+                            ui.div({"class": "input-wrapper"},
+                                ui.div({"class": "input-container"},
+                                    ui.input_text_area("prompt", None, 
+                                        placeholder="Pergunte sobre o OriginPro: plotagem, análise de dados, ferramentas estatísticas...",
+                                        rows=3
+                                    ),
+                                    ui.div({"style": "display: flex; gap: 10px; margin-top: 10px;"},
+                                        ui.input_select("model", None, 
+                                            {
+                                                "claude-3-haiku-20240307": "⚡ Haiku (rápido)",
+                                                "claude-3-5-sonnet-20240620": "✨ Sonnet (avançado)"
+                                            }, 
+                                            selected="claude-3-haiku-20240307"
+                                        )
+                                    )
+                                ),
+                                ui.input_action_button("send", "Enviar", 
+                                    class_="btn btn-primary"
+                                )
+                            )
+                        )
+                    )
+                )
+            )
+    
+    @output
+    @render.ui
     def login_feedback():
         """Mostra mensagens de feedback do login"""
         if login_message():
@@ -1086,33 +1221,6 @@ def server(input: Inputs, output: Outputs, session: Session):
         push("assistant", reply)
 
 app = App(app_ui, server)
-        """Renderiza login ou app principal"""
-        if not authenticated():
-            # LOGIN PAGE
-            return ui.div({"class": "login-container"},
-                ui.div({"class": "login-card"},
-                    ui.div({"class": "login-header"},
-                        ui.h1({"class": "login-title"}, "🚀 Origin Software Assistant"),
-                        ui.p({"class": "login-subtitle"}, "Sistema especializado em OriginPro")
-                    ),
-                    
-                    ui.output_ui("login_feedback"),
-                    
-                    ui.div({"class": "form-group"},
-                        ui.span({"class": "form-label"}, "Usuário"),
-                        ui.input_text("username", None, placeholder="Digite seu usuário")
-                    ),
-                    
-                    ui.div({"class": "form-group"},
-                        ui.span({"class": "form-label"}, "Senha"),
-                        ui.input_password("password", None, placeholder="Digite sua senha")
-                    ),
-                    
-                    ui.input_action_button("login_btn", "Entrar", class_="btn btn-primary", style="width: 100%;"),
-                    
-                    ui.hr({"style": "margin: 20px 0; border-color: #2a2a2a;"}),
-                    
-                    ui.div({"style": "text-align: center; color: #666; font-size: 13px
 
 
 
