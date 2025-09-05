@@ -1,5 +1,5 @@
 # app_with_auth.py - Origin Software Assistant com sistema de autenticação
-# Para Posit Connect / Shiny Python
+# Compatível com Shiny 1.4.0 para Posit Connect
 
 from shiny import App, ui, render, reactive, Inputs, Outputs, Session
 from dotenv import load_dotenv
@@ -20,9 +20,10 @@ HAS_KEY = bool(API_KEY)
 DATA_DIR = Path("data")
 AUTH_DIR = DATA_DIR / "auth"
 USER_DB_PATH = AUTH_DIR / "users.db"
+CACHE_DIR = DATA_DIR / "cache"
 
 # Criar diretórios necessários
-for d in (DATA_DIR, AUTH_DIR):
+for d in (DATA_DIR, AUTH_DIR, CACHE_DIR):
     d.mkdir(parents=True, exist_ok=True)
 
 # ---------------- Sistema de Autenticação ----------------
@@ -107,7 +108,7 @@ def validate_user(username: str, password: str) -> Tuple[bool, str, bool]:
         
         return True, "Login realizado com sucesso!", bool(is_admin)
 
-def add_user(username: str, password: str, email: str = "", months: int = 12, created_by: str = "admin") -> Tuple[bool, str]:
+def add_user(username: str, password: str, email: str = "", months: int = 12) -> Tuple[bool, str]:
     """Adiciona novo usuário (apenas admin)"""
     with sqlite3.connect(USER_DB_PATH) as con:
         cur = con.cursor()
@@ -133,44 +134,15 @@ def list_users():
         """)
         return cur.fetchall()
 
-def toggle_user_status(username: str) -> bool:
-    """Ativa/desativa usuário"""
-    with sqlite3.connect(USER_DB_PATH) as con:
-        cur = con.cursor()
-        cur.execute("UPDATE users SET active = 1 - active WHERE username = ?", (username,))
-        con.commit()
-        return cur.rowcount > 0
-
 # Criar banco de dados na inicialização
 create_user_db()
 
-# ---------------- Claude Integration (mantido do original) ----------------
-
-try:
-    from anthropic import Anthropic
-except Exception:
-    Anthropic = None
-
-client = None
-if HAS_KEY and Anthropic is not None:
-    try:
-        client = Anthropic(api_key=API_KEY)
-    except Exception:
-        client = None
-
-# ---------------- RAG Configuration (mantido do original) ----------------
-
-RAG_FALLBACK = (os.getenv("RAG_FALLBACK", "auto") or "auto").lower()
-RAG_MIN_TOPSCORE = float(os.getenv("RAG_MIN_TOPSCORE", "0.18"))
-RAG_MIN_CTXCHARS = int(os.getenv("RAG_MIN_CTXCHARS", "300"))
-
-# ... (resto das funções RAG do arquivo original)
-
 # ---------------- CSS Customizado ----------------
 
-LOGIN_CSS = """
+FULL_CSS = """
 :root{
   --bg:#F7F7F8; --panel:#FFFFFF;
+  --bubble-user:#E5F2FF; --bubble-assistant:#F7F7F8;
   --border:#E2E2E3; --text:#0F172A; --muted:#6B7280;
   --accent:#10A37F; --accent-hover:#0E8B6F;
   --error:#EF4444; --success:#10B981;
@@ -178,6 +150,7 @@ LOGIN_CSS = """
 }
 [data-theme='dark']{
   --bg:#202123; --panel:#2D2E30;
+  --bubble-user:#343642; --bubble-assistant:#444654;
   --border:#444654; --text:#ECECF1; --muted:#9CA3AF;
   --accent:#19C37D; --accent-hover:#15A366;
   --shadow: 0 2px 6px rgba(0,0,0,0.3);
@@ -214,12 +187,6 @@ body { background: var(--bg); color: var(--text); }
 .login-logo {
   font-size: 48px;
   margin-bottom: 16px;
-  animation: pulse 2s infinite;
-}
-
-@keyframes pulse {
-  0%, 100% { transform: scale(1); }
-  50% { transform: scale(1.1); }
 }
 
 .login-title {
@@ -236,6 +203,22 @@ body { background: var(--bg); color: var(--text); }
   font-size: 14px;
 }
 
+/* Main App */
+.app-header {
+  background: var(--panel);
+  border-bottom: 1px solid var(--border);
+  padding: 16px 24px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  box-shadow: var(--shadow);
+}
+
+.app-header h1 {
+  font-size: 20px;
+  margin: 0;
+}
+
 /* Form Elements */
 .form-group {
   margin-bottom: 20px;
@@ -249,7 +232,12 @@ body { background: var(--bg); color: var(--text); }
   color: var(--text);
 }
 
-.form-control {
+input[type="text"],
+input[type="password"],
+input[type="email"],
+input[type="number"],
+select,
+textarea {
   width: 100%;
   padding: 12px 16px;
   border: 2px solid var(--border);
@@ -260,15 +248,12 @@ body { background: var(--bg); color: var(--text); }
   transition: all 0.2s;
 }
 
-.form-control:focus {
+input:focus,
+select:focus,
+textarea:focus {
   outline: none;
   border-color: var(--accent);
   box-shadow: 0 0 0 3px rgba(25,195,125,0.1);
-}
-
-.form-control::placeholder {
-  color: var(--muted);
-  opacity: 0.7;
 }
 
 /* Buttons */
@@ -280,16 +265,17 @@ body { background: var(--bg); color: var(--text); }
   font-size: 15px;
   cursor: pointer;
   transition: all 0.2s;
-  width: 100%;
-  display: flex;
+  display: inline-flex;
   align-items: center;
   justify-content: center;
   gap: 8px;
+  text-align: center;
 }
 
 .btn-primary {
   background: linear-gradient(135deg, var(--accent), var(--accent-hover));
   color: white;
+  width: 100%;
 }
 
 .btn-primary:hover {
@@ -301,11 +287,20 @@ body { background: var(--bg); color: var(--text); }
   background: var(--bg);
   color: var(--text);
   border: 2px solid var(--border);
+  width: 100%;
 }
 
 .btn-secondary:hover {
   background: var(--panel);
   border-color: var(--accent);
+}
+
+.btn-logout {
+  background: rgba(239,68,68,0.1);
+  color: var(--error);
+  border: 1px solid var(--error);
+  padding: 8px 16px;
+  width: auto;
 }
 
 /* Messages */
@@ -314,9 +309,6 @@ body { background: var(--bg); color: var(--text); }
   border-radius: 8px;
   margin-bottom: 20px;
   font-size: 14px;
-  display: flex;
-  align-items: center;
-  gap: 8px;
 }
 
 .alert-error {
@@ -342,22 +334,14 @@ body { background: var(--bg); color: var(--text); }
   background: var(--panel);
   border-radius: 12px;
   padding: 24px;
-  margin: 20px 0;
+  margin: 20px;
   box-shadow: var(--shadow);
 }
 
 .admin-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
   margin-bottom: 20px;
   padding-bottom: 16px;
   border-bottom: 2px solid var(--border);
-}
-
-.user-list {
-  display: grid;
-  gap: 12px;
 }
 
 .user-card {
@@ -365,13 +349,11 @@ body { background: var(--bg); color: var(--text); }
   border: 1px solid var(--border);
   border-radius: 8px;
   padding: 16px;
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
+  margin-bottom: 12px;
 }
 
 .user-info {
-  flex: 1;
+  margin-bottom: 8px;
 }
 
 .user-name {
@@ -385,7 +367,8 @@ body { background: var(--bg); color: var(--text); }
   color: var(--muted);
 }
 
-.user-status {
+.status-badge {
+  display: inline-block;
   padding: 4px 12px;
   border-radius: 20px;
   font-size: 12px;
@@ -402,272 +385,272 @@ body { background: var(--bg); color: var(--text); }
   color: var(--error);
 }
 
+/* Content Area */
+.content-area {
+  padding: 20px;
+  background: var(--bg);
+  min-height: calc(100vh - 80px);
+}
+
 /* Divider */
 .divider {
-  text-align: center;
-  margin: 20px 0;
-  position: relative;
-}
-
-.divider::before {
-  content: '';
-  position: absolute;
-  left: 0;
-  top: 50%;
-  width: 100%;
   height: 1px;
   background: var(--border);
-}
-
-.divider-text {
-  background: var(--panel);
-  padding: 0 16px;
-  position: relative;
-  color: var(--muted);
-  font-size: 13px;
+  margin: 20px 0;
 }
 """
 
-# ---------------- Interface do Login ----------------
+# ---------------- Interface do App ----------------
 
-def login_ui():
-    """Interface de login"""
-    return ui.page_fluid(
-        ui.tags.style(LOGIN_CSS),
-        ui.div({"class": "login-container"},
-            ui.div({"class": "login-card"},
-                ui.div({"class": "login-header"},
-                    ui.div({"class": "login-logo"}, "🔐"),
-                    ui.h1({"class": "login-title"}, "Origin Software Assistant"),
-                    ui.p({"class": "login-subtitle"}, "Entre com suas credenciais para acessar")
-                ),
-                
-                ui.output_ui("login_message"),
-                
-                ui.div({"class": "form-group"},
-                    ui.span({"class": "form-label"}, "👤 Usuário"),
-                    ui.input_text("username", None, 
-                        placeholder="Digite seu usuário",
-                        width="100%"
-                    )
-                ),
-                
-                ui.div({"class": "form-group"},
-                    ui.span({"class": "form-label"}, "🔑 Senha"),
-                    ui.input_password("password", None,
-                        placeholder="Digite sua senha",
-                        width="100%"
-                    )
-                ),
-                
-                ui.input_action_button("login_btn", "🚀 Entrar",
-                    class_="btn btn-primary",
-                    width="100%"
-                ),
-                
-                ui.div({"class": "divider"},
-                    ui.span({"class": "divider-text"}, "ou")
-                ),
-                
-                ui.input_action_button("demo_btn", "👁️ Ver credenciais demo",
-                    class_="btn btn-secondary",
-                    width="100%"
-                ),
-                
-                ui.output_ui("demo_info")
-            )
-        )
-    )
-
-def main_app_ui():
-    """Interface principal do app (após login)"""
-    # Aqui você coloca a UI do seu app original
-    # Vou incluir um exemplo básico que pode ser expandido
-    return ui.page_fluid(
-        ui.tags.style(LOGIN_CSS),
-        
-        # Header com logout
-        ui.div({"style": "background: var(--panel); padding: 16px; border-bottom: 1px solid var(--border);"},
-            ui.row(
-                ui.column(8,
-                    ui.h2("🚀 Origin Software Assistant"),
-                    ui.output_text("welcome_message")
-                ),
-                ui.column(4,
-                    ui.div({"style": "text-align: right;"},
-                        ui.input_action_button("logout_btn", "🚪 Logout",
-                            class_="btn btn-secondary",
-                            width="auto"
-                        )
-                    )
-                )
-            )
-        ),
-        
-        # Admin panel (apenas para admins)
-        ui.output_ui("admin_panel"),
-        
-        # Conteúdo principal do app
-        ui.div({"style": "padding: 20px;"},
-            ui.h3("Chat com RAG"),
-            ui.p("Área principal do chat aqui..."),
-            # Adicione aqui o resto da interface do seu app
-        )
-    )
-
-# ---------------- Server Logic ----------------
+app_ui = ui.page_fluid(
+    ui.tags.style(FULL_CSS),
+    ui.tags.script("""
+        // Theme handler
+        document.documentElement.setAttribute('data-theme', 'dark');
+    """),
+    
+    # Container principal com condicional
+    ui.output_ui("main_content")
+)
 
 def server(input: Inputs, output: Outputs, session: Session):
     # Estado da sessão
     authenticated = reactive.Value(False)
     current_user = reactive.Value("")
     is_admin = reactive.Value(False)
+    login_message = reactive.Value("")
+    demo_shown = reactive.Value(False)
     
     @output
     @render.ui
-    def login_message():
-        """Mensagens de feedback do login"""
+    def main_content():
+        """Renderiza login ou app principal baseado no estado de autenticação"""
+        if not authenticated():
+            # TELA DE LOGIN
+            return ui.div({"class": "login-container"},
+                ui.div({"class": "login-card"},
+                    ui.div({"class": "login-header"},
+                        ui.div({"class": "login-logo"}, "🔐"),
+                        ui.h1({"class": "login-title"}, "Origin Software Assistant"),
+                        ui.p({"class": "login-subtitle"}, "Entre com suas credenciais para acessar")
+                    ),
+                    
+                    # Mensagem de feedback
+                    ui.output_ui("login_feedback"),
+                    
+                    # Formulário
+                    ui.div({"class": "form-group"},
+                        ui.span({"class": "form-label"}, "👤 Usuário"),
+                        ui.input_text("username", None, 
+                            placeholder="Digite seu usuário",
+                            width="100%"
+                        )
+                    ),
+                    
+                    ui.div({"class": "form-group"},
+                        ui.span({"class": "form-label"}, "🔑 Senha"),
+                        ui.input_password("password", None,
+                            placeholder="Digite sua senha",
+                            width="100%"
+                        )
+                    ),
+                    
+                    ui.input_action_button("login_btn", "🚀 Entrar",
+                        class_="btn btn-primary"
+                    ),
+                    
+                    ui.div({"class": "divider"}),
+                    
+                    ui.input_action_button("demo_btn", "👁️ Ver credenciais demo",
+                        class_="btn btn-secondary"
+                    ),
+                    
+                    # Info demo
+                    ui.output_ui("demo_info")
+                )
+            )
+        else:
+            # APP PRINCIPAL (após login)
+            return ui.TagList(
+                # Header
+                ui.div({"class": "app-header"},
+                    ui.div(
+                        ui.h1("🚀 Origin Software Assistant"),
+                        ui.p({"style": "margin: 0; color: var(--muted); font-size: 14px;"}, 
+                            f"Bem-vindo, {current_user()}{'  (Admin)' if is_admin() else ''}")
+                    ),
+                    ui.input_action_button("logout_btn", "🚪 Logout",
+                        class_="btn btn-logout"
+                    )
+                ),
+                
+                # Admin Panel (condicional)
+                ui.output_ui("admin_panel"),
+                
+                # Content Area
+                ui.div({"class": "content-area"},
+                    ui.h2("Chat com RAG"),
+                    ui.p("Sistema de chat integrado com processamento de PDFs"),
+                    
+                    ui.div({"class": "divider"}),
+                    
+                    # Status do sistema
+                    ui.div({"style": "background: var(--panel); padding: 20px; border-radius: 12px; margin: 20px 0;"},
+                        ui.h3("📊 Status do Sistema"),
+                        ui.p(f"✅ Autenticação ativa"),
+                        ui.p(f"{'✅' if HAS_KEY else '❌'} API Key Anthropic {'configurada' if HAS_KEY else 'não configurada'}"),
+                        ui.p(f"📁 Dados em: {DATA_DIR.absolute()}")
+                    ),
+                    
+                    ui.div({"class": "divider"}),
+                    
+                    # Área para adicionar o chat original
+                    ui.div({"style": "background: var(--panel); padding: 20px; border-radius: 12px;"},
+                        ui.h3("💬 Área do Chat"),
+                        ui.p({"style": "color: var(--muted);"},
+                            "Integre aqui o código do chat original com RAG, "
+                            "mantendo toda a funcionalidade de processar PDFs e "
+                            "conversar com o Claude."
+                        )
+                    )
+                )
+            )
+    
+    @output
+    @render.ui
+    def login_feedback():
+        """Mostra mensagens de feedback do login"""
+        if login_message():
+            msg = login_message()
+            if "sucesso" in msg.lower():
+                return ui.div({"class": "alert alert-success"}, f"✅ {msg}")
+            else:
+                return ui.div({"class": "alert alert-error"}, f"❌ {msg}")
         return ui.TagList()
     
     @output
     @render.ui
     def demo_info():
-        """Informações da conta demo"""
-        return ui.TagList()
-    
-    @reactive.Effect
-    @reactive.event(input.demo_btn)
-    def show_demo_credentials():
-        """Mostra credenciais demo"""
-        @output
-        @render.ui
-        def demo_info():
+        """Mostra informações da conta demo"""
+        if demo_shown():
             return ui.div({"class": "alert alert-info"},
-                "ℹ️",
-                ui.div(
-                    ui.strong("Conta Demo:"),
-                    ui.br(),
-                    "Usuário: ", ui.code("admin"),
-                    ui.br(),
-                    "Senha: ", ui.code("admin123")
-                )
+                ui.strong("Conta Demo:"),
+                ui.br(),
+                "Usuário: ", ui.code("admin"),
+                ui.br(),
+                "Senha: ", ui.code("admin123")
             )
-    
-    @reactive.Effect
-    @reactive.event(input.login_btn)
-    def handle_login():
-        """Processa tentativa de login"""
-        username = input.username()
-        password = input.password()
-        
-        success, message, admin = validate_user(username, password)
-        
-        @output
-        @render.ui
-        def login_message():
-            if success:
-                return ui.div({"class": "alert alert-success"}, "✅ ", message)
-            else:
-                return ui.div({"class": "alert alert-error"}, "❌ ", message)
-        
-        if success:
-            authenticated.set(True)
-            current_user.set(username)
-            is_admin.set(admin)
-            
-            # Redirecionar para app principal
-            ui.update_navs("main_nav", selected="app")
-    
-    @output
-    @render.text
-    def welcome_message():
-        if authenticated():
-            admin_text = " (Admin)" if is_admin() else ""
-            return f"Bem-vindo, {current_user()}{admin_text}!"
-        return ""
+        return ui.TagList()
     
     @output
     @render.ui
     def admin_panel():
-        """Painel administrativo"""
+        """Painel administrativo para admins"""
         if not is_admin():
             return ui.TagList()
         
         users = list_users()
         
-        user_cards = []
-        for user in users:
-            username, email, created, last_login, active, expires, admin = user
+        return ui.div({"class": "admin-panel"},
+            ui.div({"class": "admin-header"},
+                ui.h2("🛠️ Painel Administrativo"),
+                ui.p({"style": "margin: 0; color: var(--muted);"}, 
+                    f"{len(users)} usuários cadastrados")
+            ),
             
-            status_class = "status-active" if active else "status-inactive"
-            status_text = "Ativo" if active else "Inativo"
+            # Adicionar usuário
+            ui.div({"style": "margin-bottom: 24px;"},
+                ui.h3("➕ Adicionar Novo Usuário"),
+                ui.row(
+                    ui.column(6,
+                        ui.input_text("new_username", "Usuário", 
+                            placeholder="Nome de usuário")
+                    ),
+                    ui.column(6,
+                        ui.input_password("new_password", "Senha",
+                            placeholder="Senha segura")
+                    )
+                ),
+                ui.row(
+                    ui.column(6,
+                        ui.input_text("new_email", "Email (opcional)",
+                            placeholder="email@exemplo.com")
+                    ),
+                    ui.column(6,
+                        ui.input_numeric("new_months", "Meses de acesso",
+                            value=12, min=1, max=36)
+                    )
+                ),
+                ui.br(),
+                ui.input_action_button("add_user_btn", "Criar Usuário",
+                    class_="btn btn-primary",
+                    width="200px"
+                ),
+                ui.output_text("add_user_feedback")
+            ),
             
-            user_cards.append(
+            ui.div({"class": "divider"}),
+            
+            # Lista de usuários
+            ui.h3("👥 Usuários Cadastrados"),
+            ui.TagList(*[
                 ui.div({"class": "user-card"},
                     ui.div({"class": "user-info"},
                         ui.div({"class": "user-name"}, 
-                            f"{'👑 ' if admin else ''}{username}"
+                            f"{'👑 ' if user[6] else ''}{user[0]}"
                         ),
                         ui.div({"class": "user-meta"},
-                            f"Email: {email or 'N/A'} | ",
-                            f"Último login: {last_login[:10] if last_login else 'Nunca'} | ",
-                            f"Expira: {expires[:10] if expires else 'Nunca'}"
+                            f"Email: {user[1] or 'N/A'} | ",
+                            f"Criado: {user[2][:10] if user[2] else 'N/A'} | ",
+                            f"Último login: {user[3][:10] if user[3] else 'Nunca'}"
                         )
                     ),
-                    ui.div({"class": f"user-status {status_class}"}, status_text)
-                )
-            )
-        
-        return ui.div({"class": "admin-panel"},
-            ui.div({"class": "admin-header"},
-                ui.h3("🛠️ Painel Administrativo"),
-                ui.span(f"{len(users)} usuários cadastrados")
-            ),
-            
-            # Formulário para adicionar usuário
-            ui.details(
-                ui.summary("➕ Adicionar Novo Usuário"),
-                ui.div({"style": "padding: 16px;"},
-                    ui.row(
-                        ui.column(6,
-                            ui.input_text("new_username", "Usuário",
-                                placeholder="Nome de usuário"
-                            )
-                        ),
-                        ui.column(6,
-                            ui.input_password("new_password", "Senha",
-                                placeholder="Senha"
-                            )
-                        )
-                    ),
-                    ui.row(
-                        ui.column(6,
-                            ui.input_text("new_email", "Email (opcional)",
-                                placeholder="email@exemplo.com"
-                            )
-                        ),
-                        ui.column(6,
-                            ui.input_numeric("new_months", "Meses de acesso",
-                                value=12, min=1, max=36
-                            )
-                        )
-                    ),
-                    ui.br(),
-                    ui.input_action_button("add_user_btn", "Criar Usuário",
-                        class_="btn btn-primary"
-                    ),
-                    ui.output_text("add_user_message")
-                )
-            ),
-            
-            ui.br(),
-            ui.h4("Usuários Cadastrados"),
-            ui.div({"class": "user-list"}, *user_cards)
+                    ui.span({"class": f"status-badge {'status-active' if user[4] else 'status-inactive'}"},
+                        "Ativo" if user[4] else "Inativo"
+                    )
+                ) for user in users
+            ])
         )
+    
+    # Event Handlers
+    @reactive.Effect
+    @reactive.event(input.demo_btn)
+    def show_demo():
+        """Mostra credenciais demo"""
+        demo_shown.set(True)
+    
+    @reactive.Effect
+    @reactive.event(input.login_btn)
+    def handle_login():
+        """Processa login"""
+        username = input.username()
+        password = input.password()
+        
+        success, message, admin = validate_user(username, password)
+        login_message.set(message)
+        
+        if success:
+            authenticated.set(True)
+            current_user.set(username)
+            is_admin.set(admin)
+            # Force re-render
+            ui.notification_show(f"Bem-vindo, {username}!", type="message", duration=3)
+    
+    @reactive.Effect
+    @reactive.event(input.logout_btn)
+    def handle_logout():
+        """Processa logout"""
+        authenticated.set(False)
+        current_user.set("")
+        is_admin.set(False)
+        login_message.set("")
+        demo_shown.set(False)
+        ui.notification_show("Logout realizado com sucesso", type="message", duration=2)
     
     @output
     @render.text
-    def add_user_message():
+    def add_user_feedback():
+        """Feedback da criação de usuário"""
         return ""
     
     @reactive.Effect
@@ -683,38 +666,19 @@ def server(input: Inputs, output: Outputs, session: Session):
         months = input.new_months()
         
         if not username or not password:
-            @output
-            @render.text
-            def add_user_message():
-                return "❌ Usuário e senha são obrigatórios"
+            ui.notification_show("Usuário e senha são obrigatórios", type="warning", duration=3)
             return
         
         success, message = add_user(username, password, email, months)
         
-        @output
-        @render.text
-        def add_user_message():
-            return f"{'✅' if success else '❌'} {message}"
-    
-    @reactive.Effect
-    @reactive.event(input.logout_btn)
-    def handle_logout():
-        """Processa logout"""
-        authenticated.set(False)
-        current_user.set("")
-        is_admin.set(False)
-        ui.update_navs("main_nav", selected="login")
-
-# ---------------- App Principal com Navegação ----------------
-
-app_ui = ui.page_fluid(
-    ui.navs_hidden(
-        ui.nav_panel("login", login_ui()),
-        ui.nav_panel("app", main_app_ui()),
-        id="main_nav",
-        selected="login"
-    )
-)
+        if success:
+            ui.notification_show(message, type="message", duration=3)
+            # Limpar campos
+            ui.update_text("new_username", value="")
+            ui.update_password("new_password", value="")
+            ui.update_text("new_email", value="")
+        else:
+            ui.notification_show(message, type="warning", duration=3)
 
 app = App(app_ui, server)
 
