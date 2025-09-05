@@ -1,5 +1,5 @@
-# app_with_auth.py - Origin Software Assistant com sistema de autenticação
-# Compatível com Shiny 1.4.0 para Posit Connect
+# app_origin_fixed.py - Origin Software Assistant com persistência corrigida
+# Interface inspirada no Claude Code UI
 
 from shiny import App, ui, render, reactive, Inputs, Outputs, Session
 from dotenv import load_dotenv
@@ -16,15 +16,27 @@ load_dotenv()
 API_KEY = os.getenv("ANTHROPIC_API_KEY")
 HAS_KEY = bool(API_KEY)
 
-# Paths para o sistema de autenticação
-DATA_DIR = Path("data")
+# Paths para o sistema - USANDO CAMINHO PERSISTENTE
+# No Posit Connect, use /home/shiny para persistência
+if os.path.exists("/home/shiny"):
+    # Ambiente Posit Connect
+    BASE_DIR = Path("/home/shiny/.origin_assistant")
+else:
+    # Ambiente local
+    BASE_DIR = Path.home() / ".origin_assistant"
+
+# Criar estrutura de diretórios
+DATA_DIR = BASE_DIR / "data"
 AUTH_DIR = DATA_DIR / "auth"
 USER_DB_PATH = AUTH_DIR / "users.db"
 CACHE_DIR = DATA_DIR / "cache"
 
 # Criar diretórios necessários
-for d in (DATA_DIR, AUTH_DIR, CACHE_DIR):
+for d in (BASE_DIR, DATA_DIR, AUTH_DIR, CACHE_DIR):
     d.mkdir(parents=True, exist_ok=True)
+
+print(f"[BOOT] Usando diretório base: {BASE_DIR}")
+print(f"[BOOT] Banco de dados em: {USER_DB_PATH}")
 
 # ---------------- Sistema de Autenticação ----------------
 
@@ -34,11 +46,14 @@ def hash_password(password: str) -> str:
 
 def create_user_db():
     """Cria tabela de usuários se não existir"""
-    with sqlite3.connect(USER_DB_PATH) as con:
+    try:
+        con = sqlite3.connect(str(USER_DB_PATH))
         cur = con.cursor()
+        
+        # Criar tabela
         cur.execute("""
             CREATE TABLE IF NOT EXISTS users(
-                id INTEGER PRIMARY KEY,
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
                 username TEXT UNIQUE NOT NULL,
                 password_hash TEXT NOT NULL,
                 email TEXT,
@@ -50,8 +65,8 @@ def create_user_db():
             );
         """)
         
-        # Criar usuário admin padrão se não existir
-        cur.execute("SELECT id FROM users WHERE username = 'admin'")
+        # Verificar se admin existe
+        cur.execute("SELECT id FROM users WHERE username = ?", ("admin",))
         if not cur.fetchone():
             admin_pass = hash_password("admin123")
             cur.execute("""
@@ -63,17 +78,21 @@ def create_user_db():
             print("[AUTH] Usuário admin criado com senha padrão: admin123")
         
         con.commit()
+        con.close()
+        print(f"[AUTH] Banco de dados inicializado em {USER_DB_PATH}")
+        
+    except Exception as e:
+        print(f"[AUTH ERROR] Erro ao criar banco: {e}")
 
 def validate_user(username: str, password: str) -> Tuple[bool, str, bool]:
-    """
-    Valida credenciais do usuário
-    Retorna: (sucesso, mensagem_erro, is_admin)
-    """
+    """Valida credenciais do usuário"""
     if not username or not password:
         return False, "Usuário e senha são obrigatórios", False
     
-    with sqlite3.connect(USER_DB_PATH) as con:
+    try:
+        con = sqlite3.connect(str(USER_DB_PATH))
         cur = con.cursor()
+        
         cur.execute("""
             SELECT password_hash, active, subscription_expires, is_admin
             FROM users WHERE username = ?
@@ -81,22 +100,26 @@ def validate_user(username: str, password: str) -> Tuple[bool, str, bool]:
         result = cur.fetchone()
         
         if not result:
+            con.close()
             return False, "Usuário ou senha incorretos", False
         
         password_hash, active, subscription_expires, is_admin = result
         
         # Verificar senha
         if hash_password(password) != password_hash:
+            con.close()
             return False, "Usuário ou senha incorretos", False
         
         # Verificar se usuário está ativo
         if not active:
+            con.close()
             return False, "Usuário desativado. Entre em contato com o suporte.", False
         
-        # Verificar se assinatura não expirou
+        # Verificar expiração
         if subscription_expires:
             expiry = datetime.fromisoformat(subscription_expires)
             if datetime.utcnow() > expiry:
+                con.close()
                 return False, "Assinatura expirada. Renove seu acesso.", False
         
         # Atualizar último login
@@ -105,34 +128,52 @@ def validate_user(username: str, password: str) -> Tuple[bool, str, bool]:
             (datetime.utcnow().isoformat(), username)
         )
         con.commit()
+        con.close()
         
         return True, "Login realizado com sucesso!", bool(is_admin)
+        
+    except Exception as e:
+        print(f"[AUTH ERROR] Erro ao validar usuário: {e}")
+        return False, "Erro ao processar login", False
 
 def add_user(username: str, password: str, email: str = "", months: int = 12) -> Tuple[bool, str]:
-    """Adiciona novo usuário (apenas admin)"""
-    with sqlite3.connect(USER_DB_PATH) as con:
+    """Adiciona novo usuário"""
+    try:
+        con = sqlite3.connect(str(USER_DB_PATH))
         cur = con.cursor()
-        try:
-            expiry = datetime.utcnow() + timedelta(days=30*months)
-            cur.execute("""
-                INSERT INTO users(username, password_hash, email, created_at, active, subscription_expires, is_admin)
-                VALUES(?, ?, ?, ?, 1, ?, 0)
-            """, (username, hash_password(password), email, 
-                  datetime.utcnow().isoformat(), expiry.isoformat()))
-            con.commit()
-            return True, f"Usuário '{username}' criado com sucesso!"
-        except sqlite3.IntegrityError:
-            return False, "Este nome de usuário já existe"
+        
+        expiry = datetime.utcnow() + timedelta(days=30*months)
+        cur.execute("""
+            INSERT INTO users(username, password_hash, email, created_at, active, subscription_expires, is_admin)
+            VALUES(?, ?, ?, ?, 1, ?, 0)
+        """, (username, hash_password(password), email, 
+              datetime.utcnow().isoformat(), expiry.isoformat()))
+        
+        con.commit()
+        con.close()
+        return True, f"Usuário '{username}' criado com sucesso!"
+        
+    except sqlite3.IntegrityError:
+        return False, "Este nome de usuário já existe"
+    except Exception as e:
+        print(f"[AUTH ERROR] Erro ao adicionar usuário: {e}")
+        return False, f"Erro ao criar usuário: {str(e)}"
 
 def list_users():
     """Lista todos os usuários"""
-    with sqlite3.connect(USER_DB_PATH) as con:
+    try:
+        con = sqlite3.connect(str(USER_DB_PATH))
         cur = con.cursor()
         cur.execute("""
             SELECT username, email, created_at, last_login, active, subscription_expires, is_admin
             FROM users ORDER BY created_at DESC
         """)
-        return cur.fetchall()
+        users = cur.fetchall()
+        con.close()
+        return users
+    except Exception as e:
+        print(f"[AUTH ERROR] Erro ao listar usuários: {e}")
+        return []
 
 # Criar banco de dados na inicialização
 create_user_db()
@@ -172,89 +213,15 @@ except Exception:
     cosine_similarity = None
     dump = load = None
 
-# S3/R2 Dependencies
-HAVE_S3 = True
-try:
-    import boto3
-    from botocore.exceptions import ClientError
-except Exception:
-    HAVE_S3 = False
-    boto3 = None
-    ClientError = Exception
-
-print(f"[BOOT] RAG={HAVE_RAG_DEPS} | S3={HAVE_S3} | Claude={(client is not None)} | FB={RAG_FALLBACK}")
+print(f"[BOOT] RAG={HAVE_RAG_DEPS} | Claude={(client is not None)}")
 
 # Paths for RAG
 CHUNKS_JSON = CACHE_DIR / "chunks.json"
 VECTORIZER_JOBLIB = CACHE_DIR / "tfidf_vectorizer.joblib"
 MATRIX_JOBLIB = CACHE_DIR / "tfidf_matrix.joblib"
 
-# ---------------- S3/R2 Helpers ----------------
-def _s3_conf():
-    if not HAVE_S3:
-        return None
-    endpoint = os.getenv("S3_ENDPOINT_URL")
-    bucket = os.getenv("S3_BUCKET")
-    key = os.getenv("AWS_ACCESS_KEY_ID")
-    secret = os.getenv("AWS_SECRET_ACCESS_KEY")
-    prefix = os.getenv("S3_PREFIX", "osa-cache/")
-    if prefix and not prefix.endswith('/'):
-        prefix = prefix + '/'
-    if not (endpoint and bucket and key and secret):
-        return None
-    try:
-        s3 = boto3.client(
-            "s3",
-            endpoint_url=endpoint,
-            aws_access_key_id=key,
-            aws_secret_access_key=secret,
-            region_name=os.getenv("AWS_DEFAULT_REGION"),
-        )
-        return {"client": s3, "bucket": bucket, "prefix": prefix}
-    except Exception as e:
-        print(f"[S3] erro ao criar cliente: {e}")
-        return None
-
-_S3 = _s3_conf()
-
-def s3_pull_cache_if_needed():
-    if not _S3:
-        return False
-    if CHUNKS_JSON.exists() and VECTORIZER_JOBLIB.exists() and MATRIX_JOBLIB.exists():
-        return False
-    client = _S3["client"]; bucket = _S3["bucket"]
-    any_ok = False
-    for key, local in [
-        ("chunks.json", CHUNKS_JSON),
-        ("tfidf_vectorizer.joblib", VECTORIZER_JOBLIB),
-        ("tfidf_matrix.joblib", MATRIX_JOBLIB),
-    ]:
-        try:
-            client.download_file(bucket, f"{_S3['prefix']}{key}", str(local))
-            any_ok = True
-        except Exception:
-            pass
-    return any_ok
-
-def s3_push_cache():
-    if not _S3:
-        return False
-    if not (CHUNKS_JSON.exists() and VECTORIZER_JOBLIB.exists() and MATRIX_JOBLIB.exists()):
-        return False
-    client = _S3["client"]; bucket = _S3["bucket"]
-    ok_all = True
-    for key, local in [
-        ("chunks.json", CHUNKS_JSON),
-        ("tfidf_vectorizer.joblib", VECTORIZER_JOBLIB),
-        ("tfidf_matrix.joblib", MATRIX_JOBLIB),
-    ]:
-        try:
-            client.upload_file(str(local), bucket, f"{_S3['prefix']}{key}")
-        except Exception:
-            ok_all = False
-    return ok_all
-
 # ---------------- RAG Functions ----------------
+
 def extract_text(pdf_path: Path) -> str:
     if not HAVE_RAG_DEPS:
         return ""
@@ -277,8 +244,6 @@ def chunk_text(text: str, max_chars=900, overlap=220):
     return [c for c in chunks if c.strip()]
 
 def load_index():
-    if _S3:
-        s3_pull_cache_if_needed()
     if CHUNKS_JSON.exists() and VECTORIZER_JOBLIB.exists() and MATRIX_JOBLIB.exists():
         chunks = json.loads(CHUNKS_JSON.read_text(encoding="utf-8"))
         vectorizer = load(VECTORIZER_JOBLIB)
@@ -290,8 +255,6 @@ def save_index(chunks, vectorizer, matrix):
     CHUNKS_JSON.write_text(json.dumps(chunks, ensure_ascii=False), encoding="utf-8")
     dump(vectorizer, VECTORIZER_JOBLIB)
     dump(matrix, MATRIX_JOBLIB)
-    if _S3:
-        s3_push_cache()
 
 def add_pdfs_to_index(file_paths: list):
     if not HAVE_RAG_DEPS:
@@ -381,567 +344,478 @@ def chat_reply_with_context(history, model):
 
     use_rag = bool(ctx) and not rag_should_fallback(stats)
 
+    # SYSTEM PROMPT FOCADO NO ORIGINPRO
     if use_rag:
         system = (
-            "Você é o Origin Software Assistant. Use apenas o CONTEXTO abaixo; "
-            "se algo não estiver no contexto, responda somente com o que está suportado.\n\n"
-            f"=== CONTEXTO ===\n{ctx}\n=== FIM DO CONTEXTO ==="
+            "Você é o Origin Software Assistant, um especialista EXCLUSIVO no software OriginPro para análise de dados e criação de gráficos científicos. "
+            "IMPORTANTE: Você APENAS responde sobre o OriginPro. Todas as suas respostas devem ser no contexto do OriginPro.\n\n"
+            "Regras críticas:\n"
+            "- Se perguntarem sobre plotagem, gráficos, análise de dados, ou qualquer funcionalidade técnica, responda SEMPRE no contexto do OriginPro\n"
+            "- Use termos específicos do OriginPro como: worksheet, workbook, graph window, layer, plot types, analysis tools\n"
+            "- Mencione menus e ferramentas específicas do Origin quando relevante\n"
+            "- Se a pergunta não for sobre o OriginPro, educadamente redirecione para o OriginPro\n\n"
+            f"=== CONTEXTO DA DOCUMENTAÇÃO ===\n{ctx}\n=== FIM DO CONTEXTO ==="
         )
-        resp = client.messages.create(
-            model=model, max_tokens=900, temperature=0.2,
-            system=system, messages=anthropic_messages_from_history(history)
+    else:
+        system = (
+            "Você é o Origin Software Assistant, um especialista EXCLUSIVO no software OriginPro para análise de dados e criação de gráficos científicos.\n\n"
+            "IMPORTANTE: Você APENAS responde sobre o OriginPro. Todas as suas respostas devem ser no contexto do OriginPro.\n\n"
+            "Regras críticas:\n"
+            "- Se perguntarem sobre plotagem, gráficos, análise de dados, responda SEMPRE explicando como fazer no OriginPro\n"
+            "- Use termos específicos do OriginPro: worksheet, workbook, graph window, layer, plot types (Line, Scatter, Column, etc.)\n"
+            "- Mencione menus do Origin: Plot menu, Analysis menu, Statistics menu, etc.\n"
+            "- Para plotagem de gráficos, sempre explique o processo no Origin:\n"
+            "  1. Importar dados no worksheet\n"
+            "  2. Selecionar colunas relevantes\n"
+            "  3. Escolher tipo de gráfico no menu Plot\n"
+            "  4. Customizar usando as ferramentas do Origin\n"
+            "- Se a pergunta não for relacionada ao OriginPro, educadamente informe que você é especializado apenas no OriginPro"
         )
-        answer = _extract_text_from_resp(resp)
-        if cites:
-            answer += "\n\n---\n**Fontes:**\n" + cites
-        return answer
 
-    # Fallback (sem contexto)
-    system = "Você é o Origin Software Assistant. Responda com clareza e objetividade."
     resp = client.messages.create(
-        model=model, max_tokens=900, temperature=0.2,
-        system=system, messages=anthropic_messages_from_history(history)
+        model=model, 
+        max_tokens=900, 
+        temperature=0.2,
+        system=system, 
+        messages=anthropic_messages_from_history(history)
     )
+    
     answer = _extract_text_from_resp(resp)
-    answer += "\n\n_(Respondi por conhecimento geral; PDFs não tinham informação suficiente.)_"
+    
+    if use_rag and cites:
+        answer += "\n\n---\n**Fontes:**\n" + cites
+    elif not use_rag:
+        answer += "\n\n_(Resposta baseada no conhecimento geral do OriginPro. Adicione documentação PDF para respostas mais específicas.)_"
+    
     return answer
 
-# Try to restore cache on startup
-try:
-    s3_pull_cache_if_needed()
-except Exception:
-    pass
+# ---------------- CSS Estilo Claude Code UI ----------------
 
-# ---------------- CSS Customizado - UI Estilo Claude ----------------
-
-FULL_CSS = """
-/* Variáveis de tema inspiradas no Claude */
-:root {
-  --primary-bg: #0a0a0a;
-  --secondary-bg: #1a1a1a;
-  --tertiary-bg: #2a2a2a;
-  --text-primary: #ffffff;
-  --text-secondary: #a0a0a0;
-  --text-muted: #666666;
-  --accent: #c678dd;
-  --accent-hover: #d19ee8;
-  --border: #333333;
-  --input-bg: #1e1e1e;
-  --message-user: #2a3f5f;
-  --message-assistant: #1e1e1e;
-  --code-bg: #282c34;
-  --success: #98c379;
-  --error: #e06c75;
-  --warning: #e5c07b;
-  --info: #61afef;
-}
-
-/* Reset e base */
+CLAUDE_CODE_UI_CSS = """
+/* Reset e Base */
 * {
-  margin: 0;
-  padding: 0;
-  box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
 }
 
 html, body {
-  height: 100%;
-  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', sans-serif;
-  background: var(--primary-bg);
-  color: var(--text-primary);
-  line-height: 1.6;
-  -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
+    height: 100%;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    background: #0e0e0e;
+    color: #e0e0e0;
+    line-height: 1.6;
 }
 
-/* Scrollbar estilizada */
+/* Scrollbar */
 ::-webkit-scrollbar {
-  width: 8px;
-  height: 8px;
+    width: 8px;
 }
 
 ::-webkit-scrollbar-track {
-  background: var(--secondary-bg);
+    background: #1a1a1a;
 }
 
 ::-webkit-scrollbar-thumb {
-  background: var(--border);
-  border-radius: 4px;
+    background: #3a3a3a;
+    border-radius: 4px;
 }
 
-::-webkit-scrollbar-thumb:hover {
-  background: var(--text-muted);
-}
-
-/* Login Page - Estilo Claude */
+/* Login Page */
 .login-container {
-  min-height: 100vh;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background: linear-gradient(135deg, #0a0a0a 0%, #1a1a1a 100%);
+    min-height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: #0e0e0e;
 }
 
 .login-card {
-  background: var(--secondary-bg);
-  border: 1px solid var(--border);
-  border-radius: 16px;
-  padding: 48px;
-  width: 100%;
-  max-width: 440px;
-  box-shadow: 0 20px 60px rgba(0,0,0,0.8);
+    background: #1a1a1a;
+    border: 1px solid #2a2a2a;
+    border-radius: 12px;
+    padding: 40px;
+    width: 100%;
+    max-width: 400px;
+    box-shadow: 0 10px 40px rgba(0,0,0,0.8);
 }
 
 .login-header {
-  text-align: center;
-  margin-bottom: 32px;
-}
-
-.login-logo {
-  font-size: 56px;
-  margin-bottom: 20px;
-  filter: drop-shadow(0 0 20px rgba(198, 120, 221, 0.5));
+    text-align: center;
+    margin-bottom: 32px;
 }
 
 .login-title {
-  font-size: 28px;
-  font-weight: 600;
-  margin-bottom: 8px;
-  background: linear-gradient(135deg, var(--accent), var(--accent-hover));
-  -webkit-background-clip: text;
-  -webkit-text-fill-color: transparent;
-  letter-spacing: -0.5px;
+    font-size: 24px;
+    font-weight: 600;
+    margin-bottom: 8px;
+    color: #fff;
 }
 
 .login-subtitle {
-  color: var(--text-secondary);
-  font-size: 14px;
-  font-weight: 400;
+    color: #888;
+    font-size: 14px;
 }
 
-/* Header estilo Claude */
-.app-header {
-  background: var(--secondary-bg);
-  border-bottom: 1px solid var(--border);
-  padding: 12px 24px;
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  backdrop-filter: blur(10px);
-  position: sticky;
-  top: 0;
-  z-index: 100;
+/* Sidebar */
+.sidebar {
+    width: 260px;
+    background: #141414;
+    border-right: 1px solid #2a2a2a;
+    display: flex;
+    flex-direction: column;
+    height: 100vh;
+    position: fixed;
+    left: 0;
+    top: 0;
 }
 
-.app-header h1 {
-  font-size: 18px;
-  font-weight: 600;
-  letter-spacing: -0.3px;
-  display: flex;
-  align-items: center;
-  gap: 10px;
+.sidebar-header {
+    padding: 16px;
+    border-bottom: 1px solid #2a2a2a;
 }
 
-.app-header h1::before {
-  content: "✨";
-  font-size: 20px;
-  filter: drop-shadow(0 0 10px rgba(198, 120, 221, 0.5));
+.sidebar-title {
+    font-size: 16px;
+    font-weight: 600;
+    color: #fff;
+    display: flex;
+    align-items: center;
+    gap: 8px;
 }
 
-/* Chat Area - Estilo Claude */
-.chat-wrapper {
-  background: var(--primary-bg);
-  height: calc(100vh - 200px);
-  overflow-y: auto;
-  padding: 24px 0;
+.sessions-list {
+    flex: 1;
+    overflow-y: auto;
+    padding: 8px;
+}
+
+.session-item {
+    padding: 10px 12px;
+    margin-bottom: 4px;
+    background: transparent;
+    border: 1px solid transparent;
+    border-radius: 6px;
+    color: #888;
+    cursor: pointer;
+    font-size: 14px;
+    transition: all 0.2s;
+}
+
+.session-item:hover {
+    background: #1a1a1a;
+    color: #e0e0e0;
+}
+
+.session-item.active {
+    background: #1e1e1e;
+    border-color: #3a3a3a;
+    color: #fff;
+}
+
+.new-session-btn {
+    margin: 8px;
+    padding: 10px;
+    background: #1e1e1e;
+    border: 1px solid #3a3a3a;
+    border-radius: 6px;
+    color: #e0e0e0;
+    cursor: pointer;
+    text-align: center;
+    transition: all 0.2s;
+}
+
+.new-session-btn:hover {
+    background: #2a2a2a;
+    border-color: #4a4a4a;
+}
+
+/* Main Content */
+.main-content {
+    margin-left: 260px;
+    height: 100vh;
+    display: flex;
+    flex-direction: column;
+    background: #0e0e0e;
+}
+
+.header-bar {
+    background: #141414;
+    border-bottom: 1px solid #2a2a2a;
+    padding: 12px 20px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.header-title {
+    font-size: 14px;
+    color: #888;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.header-actions {
+    display: flex;
+    gap: 8px;
+}
+
+/* Chat Area */
+.chat-area {
+    flex: 1;
+    overflow-y: auto;
+    padding: 20px;
 }
 
 .chat-container {
-  max-width: 800px;
-  margin: 0 auto;
-  padding: 0 20px;
+    max-width: 800px;
+    margin: 0 auto;
 }
 
-/* Mensagens estilo Claude */
+/* Messages */
 .message {
-  display: flex;
-  gap: 16px;
-  margin-bottom: 32px;
-  animation: fadeInUp 0.3s ease;
+    margin-bottom: 24px;
+    display: flex;
+    gap: 12px;
 }
 
-@keyframes fadeInUp {
-  from {
-    opacity: 0;
-    transform: translateY(10px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
+.message-avatar {
+    width: 32px;
+    height: 32px;
+    border-radius: 6px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 12px;
+    font-weight: 600;
+    flex-shrink: 0;
 }
 
-.message.user {
-  flex-direction: row-reverse;
+.message.user .message-avatar {
+    background: #2a3f5f;
+    color: #61afef;
 }
 
-.avatar {
-  width: 32px;
-  height: 32px;
-  border-radius: 8px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-weight: 600;
-  font-size: 12px;
-  flex-shrink: 0;
-  box-shadow: 0 2px 8px rgba(0,0,0,0.3);
-}
-
-.message.assistant .avatar {
-  background: linear-gradient(135deg, var(--accent), var(--accent-hover));
-  color: white;
-}
-
-.message.user .avatar {
-  background: var(--message-user);
-  color: white;
+.message.assistant .message-avatar {
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    color: white;
 }
 
 .message-content {
-  flex: 1;
-  max-width: 85%;
+    flex: 1;
 }
 
-.role {
-  font-size: 12px;
-  font-weight: 500;
-  color: var(--text-secondary);
-  margin-bottom: 6px;
-  letter-spacing: 0.5px;
-  text-transform: uppercase;
+.message-role {
+    font-size: 12px;
+    font-weight: 600;
+    color: #888;
+    margin-bottom: 4px;
+    text-transform: uppercase;
 }
 
-.message.user .role {
-  text-align: right;
+.message-text {
+    background: #1a1a1a;
+    border: 1px solid #2a2a2a;
+    border-radius: 8px;
+    padding: 12px 16px;
+    color: #e0e0e0;
+    font-size: 14px;
+    line-height: 1.6;
 }
 
-.bubble {
-  background: var(--message-assistant);
-  border: 1px solid var(--border);
-  border-radius: 12px;
-  padding: 16px 20px;
-  font-size: 15px;
-  line-height: 1.7;
-  box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+.message.user .message-text {
+    background: #1e2330;
+    border-color: #2a3f5f;
 }
 
-.message.user .bubble {
-  background: var(--message-user);
-  border-color: rgba(198, 120, 221, 0.2);
-}
-
-/* Composer estilo Claude */
-.composer-wrapper {
-  background: var(--secondary-bg);
-  border-top: 1px solid var(--border);
-  padding: 20px;
-  position: sticky;
-  bottom: 0;
-}
-
+/* Composer */
 .composer {
-  max-width: 800px;
-  margin: 0 auto;
-  display: flex;
-  gap: 12px;
-  align-items: flex-end;
+    background: #141414;
+    border-top: 1px solid #2a2a2a;
+    padding: 16px 20px;
 }
 
-.input-group {
-  flex: 1;
+.composer-inner {
+    max-width: 800px;
+    margin: 0 auto;
 }
 
-/* Textarea estilo Claude */
+.input-wrapper {
+    display: flex;
+    gap: 12px;
+    align-items: flex-end;
+}
+
+.input-container {
+    flex: 1;
+}
+
 textarea {
-  width: 100%;
-  background: var(--input-bg);
-  color: var(--text-primary);
-  border: 1px solid var(--border);
-  border-radius: 12px;
-  padding: 14px 18px;
-  font-size: 15px;
-  line-height: 1.5;
-  resize: none;
-  font-family: inherit;
-  transition: all 0.2s ease;
+    width: 100%;
+    background: #1a1a1a;
+    color: #e0e0e0;
+    border: 1px solid #2a2a2a;
+    border-radius: 8px;
+    padding: 12px;
+    font-size: 14px;
+    resize: none;
+    font-family: inherit;
 }
 
 textarea:focus {
-  outline: none;
-  border-color: var(--accent);
-  box-shadow: 0 0 0 1px var(--accent), 0 0 20px rgba(198, 120, 221, 0.1);
+    outline: none;
+    border-color: #3a3a3a;
+    box-shadow: 0 0 0 1px #3a3a3a;
 }
 
-textarea::placeholder {
-  color: var(--text-muted);
-}
-
-/* Select estilo Claude */
-select {
-  background: var(--input-bg);
-  color: var(--text-primary);
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  padding: 8px 12px;
-  font-size: 13px;
-  cursor: pointer;
-  transition: all 0.2s;
-}
-
-select:hover {
-  border-color: var(--accent);
-}
-
-select:focus {
-  outline: none;
-  border-color: var(--accent);
-  box-shadow: 0 0 0 1px var(--accent);
-}
-
-/* Buttons estilo Claude */
+/* Buttons */
 .btn {
-  padding: 10px 20px;
-  border-radius: 8px;
-  border: none;
-  font-weight: 500;
-  font-size: 14px;
-  cursor: pointer;
-  transition: all 0.2s ease;
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  letter-spacing: 0.3px;
+    padding: 10px 20px;
+    background: #2a2a2a;
+    color: #e0e0e0;
+    border: 1px solid #3a3a3a;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 14px;
+    transition: all 0.2s;
+}
+
+.btn:hover {
+    background: #3a3a3a;
+    border-color: #4a4a4a;
 }
 
 .btn-primary {
-  background: var(--accent);
-  color: white;
-  box-shadow: 0 2px 8px rgba(198, 120, 221, 0.3);
+    background: #667eea;
+    border-color: #667eea;
+    color: white;
 }
 
 .btn-primary:hover {
-  background: var(--accent-hover);
-  transform: translateY(-1px);
-  box-shadow: 0 4px 12px rgba(198, 120, 221, 0.4);
-}
-
-.btn-secondary {
-  background: var(--tertiary-bg);
-  color: var(--text-primary);
-  border: 1px solid var(--border);
-}
-
-.btn-secondary:hover {
-  background: var(--input-bg);
-  border-color: var(--accent);
+    background: #5a67d8;
+    border-color: #5a67d8;
 }
 
 .btn-logout {
-  background: transparent;
-  color: var(--text-secondary);
-  border: 1px solid var(--border);
-  padding: 6px 12px;
-  font-size: 13px;
+    background: transparent;
+    border: 1px solid #3a3a3a;
+    padding: 6px 12px;
+    font-size: 12px;
 }
 
 .btn-logout:hover {
-  color: var(--error);
-  border-color: var(--error);
+    border-color: #e06c75;
+    color: #e06c75;
 }
 
-/* Form elements estilo Claude */
+/* Forms */
 input[type="text"],
 input[type="password"],
-input[type="email"],
-input[type="number"] {
-  width: 100%;
-  padding: 12px 16px;
-  background: var(--input-bg);
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  color: var(--text-primary);
-  font-size: 15px;
-  transition: all 0.2s;
+input[type="email"] {
+    width: 100%;
+    padding: 10px;
+    background: #0e0e0e;
+    border: 1px solid #2a2a2a;
+    border-radius: 6px;
+    color: #e0e0e0;
+    font-size: 14px;
 }
 
 input:focus {
-  outline: none;
-  border-color: var(--accent);
-  box-shadow: 0 0 0 1px var(--accent);
+    outline: none;
+    border-color: #3a3a3a;
 }
 
 .form-group {
-  margin-bottom: 20px;
+    margin-bottom: 16px;
 }
 
 .form-label {
-  display: block;
-  margin-bottom: 8px;
-  font-size: 13px;
-  font-weight: 500;
-  color: var(--text-secondary);
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
+    display: block;
+    margin-bottom: 6px;
+    font-size: 13px;
+    color: #888;
 }
 
-/* Knowledge Base estilo Claude */
+/* Knowledge Base */
 .kb-section {
-  background: var(--secondary-bg);
-  padding: 16px 24px;
-  border-bottom: 1px solid var(--border);
-}
-
-.kb-card {
-  background: var(--tertiary-bg);
-  border: 1px solid var(--border);
-  border-radius: 12px;
-  padding: 16px;
+    padding: 16px 20px;
+    background: #141414;
+    border-bottom: 1px solid #2a2a2a;
 }
 
 .kb-info {
-  font-size: 13px;
-  color: var(--text-secondary);
-  margin-top: 8px;
-  padding: 8px 12px;
-  background: var(--input-bg);
-  border-radius: 6px;
-  border: 1px solid var(--border);
+    font-size: 13px;
+    color: #888;
+    margin-top: 8px;
 }
 
-/* Admin Panel estilo Claude */
-.admin-panel {
-  background: var(--secondary-bg);
-  border-radius: 12px;
-  padding: 24px;
-  margin: 20px;
-  border: 1px solid var(--border);
-}
-
-.admin-header {
-  margin-bottom: 24px;
-  padding-bottom: 16px;
-  border-bottom: 1px solid var(--border);
-}
-
-.admin-header h2 {
-  font-size: 20px;
-  font-weight: 600;
-  letter-spacing: -0.3px;
-}
-
-.user-card {
-  background: var(--tertiary-bg);
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  padding: 16px;
-  margin-bottom: 12px;
-  transition: all 0.2s;
-}
-
-.user-card:hover {
-  border-color: var(--accent);
-  box-shadow: 0 2px 8px rgba(198, 120, 221, 0.1);
-}
-
-/* Alerts estilo Claude */
+/* Alerts */
 .alert {
-  padding: 12px 16px;
-  border-radius: 8px;
-  margin-bottom: 20px;
-  font-size: 14px;
-  border: 1px solid;
+    padding: 10px 14px;
+    border-radius: 6px;
+    margin-bottom: 16px;
+    font-size: 13px;
 }
 
 .alert-error {
-  background: rgba(224, 108, 117, 0.1);
-  color: var(--error);
-  border-color: rgba(224, 108, 117, 0.3);
+    background: rgba(224, 108, 117, 0.1);
+    color: #e06c75;
+    border: 1px solid rgba(224, 108, 117, 0.3);
 }
 
 .alert-success {
-  background: rgba(152, 195, 121, 0.1);
-  color: var(--success);
-  border-color: rgba(152, 195, 121, 0.3);
+    background: rgba(152, 195, 121, 0.1);
+    color: #98c379;
+    border: 1px solid rgba(152, 195, 121, 0.3);
 }
 
-.alert-info {
-  background: rgba(97, 175, 239, 0.1);
-  color: var(--info);
-  border-color: rgba(97, 175, 239, 0.3);
+/* Admin Panel */
+.admin-panel {
+    background: #141414;
+    border: 1px solid #2a2a2a;
+    border-radius: 8px;
+    padding: 20px;
+    margin: 20px;
 }
 
-/* Animações */
-@keyframes typing {
-  0%, 60%, 100% { opacity: 0.2; }
-  30% { opacity: 1; }
+.user-card {
+    background: #1a1a1a;
+    border: 1px solid #2a2a2a;
+    border-radius: 6px;
+    padding: 12px;
+    margin-bottom: 8px;
+}
+
+/* Loading dots */
+.typing-dots {
+    display: flex;
+    gap: 4px;
+    padding: 12px;
 }
 
 .typing-dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: var(--accent);
-  animation: typing 1.4s infinite;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: #667eea;
+    animation: typing 1.4s infinite;
 }
 
-/* Markdown styling */
-.content h1, .content h2, .content h3 {
-  margin: 1rem 0 0.5rem;
-  font-weight: 600;
-  line-height: 1.3;
-  color: var(--text-primary);
+@keyframes typing {
+    0%, 60%, 100% { opacity: 0.2; }
+    30% { opacity: 1; }
 }
 
-.content code {
-  background: var(--code-bg);
-  padding: 2px 6px;
-  border-radius: 4px;
-  font-size: 0.9em;
-  font-family: 'Fira Code', 'Monaco', monospace;
-  color: var(--accent);
-}
-
-.content pre {
-  background: var(--code-bg);
-  padding: 16px;
-  border-radius: 8px;
-  overflow-x: auto;
-  margin: 1rem 0;
-  border: 1px solid var(--border);
-}
-
-.content a {
-  color: var(--accent);
-  text-decoration: none;
-  border-bottom: 1px solid transparent;
-  transition: border-color 0.2s;
-}
-
-.content a:hover {
-  border-bottom-color: var(--accent);
-}
+.typing-dot:nth-child(2) { animation-delay: 0.2s; }
+.typing-dot:nth-child(3) { animation-delay: 0.4s; }
 """
 
 # ---------------- Interface do App ----------------
 
 app_ui = ui.page_fluid(
-    ui.tags.style(FULL_CSS),
-    ui.tags.script("""
-        // Theme handler
-        document.documentElement.setAttribute('data-theme', 'dark');
-    """),
-    
-    # Container principal com condicional
+    ui.tags.style(CLAUDE_CODE_UI_CSS),
     ui.output_ui("main_content")
 )
 
@@ -951,7 +825,6 @@ def server(input: Inputs, output: Outputs, session: Session):
     current_user = reactive.Value("")
     is_admin = reactive.Value(False)
     login_message = reactive.Value("")
-    demo_shown = reactive.Value(False)
     
     # Estado do chat
     history = reactive.Value([])
@@ -962,130 +835,6 @@ def server(input: Inputs, output: Outputs, session: Session):
     
     @output
     @render.ui
-    def main_content():
-        """Renderiza login ou app principal baseado no estado de autenticação"""
-        if not authenticated():
-            # TELA DE LOGIN
-            return ui.div({"class": "login-container"},
-                ui.div({"class": "login-card"},
-                    ui.div({"class": "login-header"},
-                        ui.div({"class": "login-logo"}, "🔐"),
-                        ui.h1({"class": "login-title"}, "Origin Software Assistant"),
-                        ui.p({"class": "login-subtitle"}, "Entre com suas credenciais para acessar")
-                    ),
-                    
-                    # Mensagem de feedback
-                    ui.output_ui("login_feedback"),
-                    
-                    # Formulário
-                    ui.div({"class": "form-group"},
-                        ui.span({"class": "form-label"}, "👤 Usuário"),
-                        ui.input_text("username", None, 
-                            placeholder="Digite seu usuário",
-                            width="100%"
-                        )
-                    ),
-                    
-                    ui.div({"class": "form-group"},
-                        ui.span({"class": "form-label"}, "🔑 Senha"),
-                        ui.input_password("password", None,
-                            placeholder="Digite sua senha",
-                            width="100%"
-                        )
-                    ),
-                    
-                    ui.input_action_button("login_btn", "🚀 Entrar",
-                        class_="btn btn-primary"
-                    ),
-                    
-                    ui.div({"class": "divider"}),
-                    
-                    ui.input_action_button("demo_btn", "👁️ Ver credenciais demo",
-                        class_="btn btn-secondary"
-                    ),
-                    
-                    # Info demo
-                    ui.output_ui("demo_info")
-                )
-            )
-        else:
-            # APP PRINCIPAL (após login)
-            return ui.TagList(
-                # Header
-                ui.div({"class": "app-header"},
-                    ui.div(
-                        ui.h1("🚀 Origin Software Assistant"),
-                        ui.p({"style": "margin: 0; color: var(--muted); font-size: 14px;"}, 
-                            f"Bem-vindo, {current_user()}{'  (Admin)' if is_admin() else ''}")
-                    ),
-                    ui.input_action_button("logout_btn", "🚪 Logout",
-                        class_="btn btn-logout"
-                    )
-                ),
-                
-                # Admin Panel (condicional)
-                ui.output_ui("admin_panel"),
-                
-                # Content Area - Chat RAG Integrado
-                ui.div({"class": "content-area", "style": "padding: 0; display: flex; flex-direction: column; height: calc(100vh - 80px);"},
-                    
-                    # Knowledge Base Section
-                    ui.div({"class": "kb-section", "style": "background: var(--panel); padding: 16px 24px; border-bottom: 1px solid var(--border);"},
-                        ui.div({"class": "kb-card", "style": "background: var(--bg); border: 1px solid var(--border); border-radius: 12px; padding: 16px;"},
-                            ui.h3("📚 Base de Conhecimento", {"style": "font-size: 16px; font-weight: 600; margin-bottom: 12px;"}),
-                            ui.input_file("docs", "Adicionar PDFs", 
-                                multiple=True, 
-                                accept=[".pdf"],
-                                width="auto"
-                            ),
-                            ui.div({"class": "kb-info", "style": "font-size: 13px; color: var(--muted); margin-top: 8px; padding: 8px; background: var(--panel); border-radius: 6px;"},
-                                ui.output_text("kb_status")
-                            )
-                        )
-                    ),
-                    
-                    # Chat Area
-                    ui.div({"class": "chat-wrapper", "style": "flex: 1; overflow-y: auto; padding: 24px; background: var(--bg);"},
-                        ui.div({"class": "chat-container", "style": "max-width: 900px; margin: 0 auto;"},
-                            ui.output_ui("chat_thread")
-                        )
-                    ),
-                    
-                    # Composer
-                    ui.div({"class": "composer-wrapper", "style": "background: var(--panel); border-top: 1px solid var(--border); padding: 20px 24px; box-shadow: 0 -2px 10px rgba(0,0,0,0.1);"},
-                        ui.div({"class": "composer", "style": "max-width: 900px; margin: 0 auto; display: flex; gap: 16px; align-items: flex-end;"},
-                            ui.div({"class": "input-group", "style": "flex: 1;"},
-                                ui.input_text_area("prompt", None, 
-                                    placeholder="Digite sua mensagem... (Shift+Enter para nova linha)",
-                                    rows=3,
-                                    width="100%"
-                                ),
-                                ui.div({"class": "controls-row", "style": "display: flex; gap: 12px; margin-top: 12px; align-items: center;"},
-                                    ui.input_select("model", None, 
-                                        {
-                                            "claude-3-haiku-20240307": "⚡ Claude 3 Haiku (rápido)",
-                                            "claude-3-5-sonnet-20240620": "✨ Claude 3.5 Sonnet (avançado)"
-                                        }, 
-                                        selected="claude-3-haiku-20240307",
-                                        width="auto"
-                                    ),
-                                    ui.input_action_button("clear", "🗑️ Limpar", 
-                                        class_="btn btn-secondary",
-                                        style="width: auto; padding: 8px 16px;"
-                                    )
-                                )
-                            ),
-                            ui.input_action_button("send", "Enviar →", 
-                                class_="btn btn-primary",
-                                style="min-width: 100px; height: 48px;"
-                            )
-                        )
-                    )
-                )
-            )
-    
-    @output
-    @render.ui
     def login_feedback():
         """Mostra mensagens de feedback do login"""
         if login_message():
@@ -1093,21 +842,7 @@ def server(input: Inputs, output: Outputs, session: Session):
             if "sucesso" in msg.lower():
                 return ui.div({"class": "alert alert-success"}, f"✅ {msg}")
             else:
-                return ui.div({"class": "alert alert-error"}, f"❌ {msg}")
-        return ui.TagList()
-    
-    @output
-    @render.ui
-    def demo_info():
-        """Mostra informações da conta demo"""
-        if demo_shown():
-            return ui.div({"class": "alert alert-info"},
-                ui.strong("Conta Demo:"),
-                ui.br(),
-                "Usuário: ", ui.code("admin"),
-                ui.br(),
-                "Senha: ", ui.code("admin123")
-            )
+                return ui.div({"class": "alert alert-error"}, f"⚠️ {msg}")
         return ui.TagList()
     
     @output
@@ -1120,124 +855,93 @@ def server(input: Inputs, output: Outputs, session: Session):
         users = list_users()
         
         return ui.div({"class": "admin-panel"},
-            ui.div({"class": "admin-header"},
-                ui.h2("🛠️ Painel Administrativo"),
-                ui.p({"style": "margin: 0; color: var(--muted);"}, 
-                    f"{len(users)} usuários cadastrados")
-            ),
+            ui.h3("👥 Gerenciar Usuários"),
+            ui.hr(),
             
             # Adicionar usuário
-            ui.div({"style": "margin-bottom: 24px;"},
-                ui.h3("➕ Adicionar Novo Usuário"),
-                ui.row(
-                    ui.column(6,
-                        ui.input_text("new_username", "Usuário", 
-                            placeholder="Nome de usuário")
-                    ),
-                    ui.column(6,
-                        ui.input_password("new_password", "Senha",
-                            placeholder="Senha segura")
-                    )
+            ui.row(
+                ui.column(3,
+                    ui.input_text("new_username", "Usuário", placeholder="nome")
                 ),
-                ui.row(
-                    ui.column(6,
-                        ui.input_text("new_email", "Email (opcional)",
-                            placeholder="email@exemplo.com")
-                    ),
-                    ui.column(6,
-                        ui.input_numeric("new_months", "Meses de acesso",
-                            value=12, min=1, max=36)
-                    )
+                ui.column(3,
+                    ui.input_password("new_password", "Senha", placeholder="senha")
                 ),
-                ui.br(),
-                ui.input_action_button("add_user_btn", "Criar Usuário",
-                    class_="btn btn-primary",
-                    width="200px"
+                ui.column(3,
+                    ui.input_text("new_email", "Email", placeholder="email")
                 ),
-                ui.output_text("add_user_feedback")
+                ui.column(3,
+                    ui.input_numeric("new_months", "Meses", value=12, min=1, max=36)
+                )
             ),
+            ui.input_action_button("add_user_btn", "Adicionar Usuário", class_="btn"),
+            ui.output_text("add_user_feedback"),
             
-            ui.div({"class": "divider"}),
+            ui.hr(),
             
             # Lista de usuários
-            ui.h3("👥 Usuários Cadastrados"),
+            ui.h4("Usuários Cadastrados"),
             ui.TagList(*[
                 ui.div({"class": "user-card"},
-                    ui.div({"class": "user-info"},
-                        ui.div({"class": "user-name"}, 
-                            f"{'👑 ' if user[6] else ''}{user[0]}"
-                        ),
-                        ui.div({"class": "user-meta"},
-                            f"Email: {user[1] or 'N/A'} | ",
-                            f"Criado: {user[2][:10] if user[2] else 'N/A'} | ",
-                            f"Último login: {user[3][:10] if user[3] else 'Nunca'}"
-                        )
-                    ),
-                    ui.span({"class": f"status-badge {'status-active' if user[4] else 'status-inactive'}"},
-                        "Ativo" if user[4] else "Inativo"
-                    )
+                    ui.strong(user[0] + (" 👑" if user[6] else "")),
+                    ui.span(f" • {user[1] or 'sem email'}"),
+                    ui.span(f" • Ativo: {'Sim' if user[4] else 'Não'}"),
+                    ui.span(f" • Expira: {user[5][:10] if user[5] else 'N/A'}")
                 ) for user in users
             ])
         )
     
-    # Chat Outputs
     @output
     @render.text
     def kb_status():
         """Status da base de conhecimento"""
         if not HAVE_RAG_DEPS:
-            return "⚠️ RAG indisponível: instale pypdf, scikit-learn e joblib"
+            return "⚠️ RAG indisponível"
         chunks, _, _ = load_index()
         n_docs = len({c["source"] for c in chunks}) if chunks else 0
         n_chunks = len(chunks)
-        
-        status_parts = [f"📄 {n_docs} documento(s)", f"🧩 {n_chunks} fragmento(s)"]
-        
-        if _S3:
-            status_parts.append("☁️ Sincronização S3 ativa")
-        
-        if RAG_FALLBACK != "off":
-            status_parts.append(f"🔄 Fallback: {RAG_MIN_TOPSCORE:.2f}/{RAG_MIN_CTXCHARS}")
-            
-        return " • ".join(status_parts)
+        return f"📄 {n_docs} docs • 🧩 {n_chunks} chunks"
     
     @output
     @render.ui
     def chat_thread():
         """Renderiza thread do chat"""
         items = []
+        
+        # Mensagem inicial se chat vazio
+        if not history() and not typing():
+            items.append(
+                ui.div({"style": "text-align: center; padding: 40px; color: #666;"},
+                    ui.h3("Bem-vindo ao Origin Software Assistant!"),
+                    ui.p("Faça perguntas sobre:"),
+                    ui.div({"style": "margin-top: 20px; text-align: left; max-width: 400px; margin: 20px auto;"},
+                        "• Como criar gráficos no OriginPro",
+                        ui.br(),
+                        "• Análise de dados e estatísticas",
+                        ui.br(),
+                        "• Importação e manipulação de dados",
+                        ui.br(),
+                        "• Ferramentas de fitting e análise",
+                        ui.br(),
+                        "• Customização de gráficos científicos"
+                    )
+                )
+            )
+        
+        # Mensagens do chat
         for m in history():
-            is_assistant = m["role"] == "assistant"
-            
-            avatar_style = "width: 36px; height: 36px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-weight: 600; font-size: 14px; flex-shrink: 0;"
-            if is_assistant:
-                avatar_style += "background: linear-gradient(135deg, var(--accent), var(--accent-hover)); color: white;"
-                avatar_text = "OA"
-                role_text = "Origin Assistant"
-            else:
-                avatar_style += "background: linear-gradient(135deg, #667EEA, #764BA2); color: white;"
-                avatar_text = "V"
-                role_text = "Você"
-            
-            message_style = "display: flex; gap: 16px; margin-bottom: 24px;"
-            if not is_assistant:
-                message_style += "flex-direction: row-reverse;"
-            
-            bubble_style = "background: var(--bubble-assistant); border: 1px solid var(--border); border-radius: 18px; padding: 12px 16px; box-shadow: var(--shadow);"
-            if not is_assistant:
-                bubble_style = "background: var(--bubble-user); border: 1px solid var(--border); border-radius: 18px; padding: 12px 16px; box-shadow: var(--shadow);"
+            is_user = m["role"] == "user"
             
             items.append(
-                ui.div({"style": message_style},
-                    ui.div({"style": avatar_style}, avatar_text),
-                    ui.div({"style": "flex: 1; max-width: 75%;"},
-                        ui.div({"style": f"font-size: 12px; font-weight: 600; color: var(--muted); margin-bottom: 4px; {'text-align: right;' if not is_assistant else ''}"},
-                            role_text
+                ui.div({"class": f"message {'user' if is_user else 'assistant'}"},
+                    ui.div({"class": "message-avatar"},
+                        "U" if is_user else "OA"
+                    ),
+                    ui.div({"class": "message-content"},
+                        ui.div({"class": "message-role"},
+                            "Você" if is_user else "Origin Assistant"
                         ),
-                        ui.div({"style": bubble_style},
-                            ui.div({"style": "font-size: 15px; line-height: 1.6; color: var(--text);"},
-                                ui.markdown(m["content"])
-                            )
+                        ui.div({"class": "message-text"},
+                            ui.markdown(m["content"])
                         )
                     )
                 )
@@ -1246,35 +950,24 @@ def server(input: Inputs, output: Outputs, session: Session):
         # Typing indicator
         if typing():
             items.append(
-                ui.div({"style": "display: flex; gap: 16px; margin-bottom: 24px;"},
-                    ui.div({"style": "width: 36px; height: 36px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-weight: 600; font-size: 14px; background: linear-gradient(135deg, var(--accent), var(--accent-hover)); color: white;"}, "OA"),
-                    ui.div({"style": "flex: 1; max-width: 75%;"},
-                        ui.div({"style": "font-size: 12px; font-weight: 600; color: var(--muted); margin-bottom: 4px;"},
-                            "Origin Assistant"
-                        ),
-                        ui.div({"style": "background: var(--bubble-assistant); border: 1px solid var(--border); border-radius: 18px; padding: 12px 16px;"},
-                            ui.div({"style": "display: flex; gap: 4px;"},
-                                ui.div({"style": "width: 8px; height: 8px; border-radius: 50%; background: var(--muted); animation: typing 1.4s infinite;"}),
-                                ui.div({"style": "width: 8px; height: 8px; border-radius: 50%; background: var(--muted); animation: typing 1.4s infinite; animation-delay: 0.2s;"}),
-                                ui.div({"style": "width: 8px; height: 8px; border-radius: 50%; background: var(--muted); animation: typing 1.4s infinite; animation-delay: 0.4s;"})
+                ui.div({"class": "message assistant"},
+                    ui.div({"class": "message-avatar"}, "OA"),
+                    ui.div({"class": "message-content"},
+                        ui.div({"class": "message-role"}, "Origin Assistant"),
+                        ui.div({"class": "message-text"},
+                            ui.div({"class": "typing-dots"},
+                                ui.div({"class": "typing-dot"}),
+                                ui.div({"class": "typing-dot"}),
+                                ui.div({"class": "typing-dot"})
                             )
                         )
                     )
                 )
             )
         
-        return ui.TagList(*items) if items else ui.div(
-            {"style": "text-align: center; color: var(--muted); padding: 40px;"},
-            "💬 Inicie uma conversa enviando uma mensagem"
-        )
+        return ui.TagList(*items)
     
     # Event Handlers - Login
-    @reactive.Effect
-    @reactive.event(input.demo_btn)
-    def show_demo():
-        """Mostra credenciais demo"""
-        demo_shown.set(True)
-    
     @reactive.Effect
     @reactive.event(input.login_btn)
     def handle_login():
@@ -1289,7 +982,7 @@ def server(input: Inputs, output: Outputs, session: Session):
             authenticated.set(True)
             current_user.set(username)
             is_admin.set(admin)
-            ui.notification_show(f"Bem-vindo, {username}!", type="message", duration=3)
+            print(f"[LOGIN] Usuário {username} autenticado com sucesso")
     
     @reactive.Effect
     @reactive.event(input.logout_btn)
@@ -1298,16 +991,13 @@ def server(input: Inputs, output: Outputs, session: Session):
         authenticated.set(False)
         current_user.set("")
         is_admin.set(False)
-        login_message.set("")
-        demo_shown.set(False)
-        history.set([])  # Limpar histórico do chat
-        ui.notification_show("Logout realizado com sucesso", type="message", duration=2)
+        history.set([])
+        ui.notification_show("Logout realizado", type="message", duration=2)
     
     # Event Handlers - Admin
     @output
     @render.text
     def add_user_feedback():
-        """Feedback da criação de usuário"""
         return ""
     
     @reactive.Effect
@@ -1323,39 +1013,32 @@ def server(input: Inputs, output: Outputs, session: Session):
         months = input.new_months()
         
         if not username or not password:
-            ui.notification_show("Usuário e senha são obrigatórios", type="warning", duration=3)
+            ui.notification_show("Preencha usuário e senha", type="warning", duration=3)
             return
         
         success, message = add_user(username, password, email, months)
+        ui.notification_show(message, type="message" if success else "warning", duration=3)
         
         if success:
-            ui.notification_show(message, type="message", duration=3)
             # Limpar campos
             ui.update_text("new_username", value="")
             ui.update_password("new_password", value="")
             ui.update_text("new_email", value="")
-        else:
-            ui.notification_show(message, type="warning", duration=3)
     
     # Event Handlers - Chat
     @reactive.Effect
-    @reactive.event(input.clear)
+    @reactive.event(input.clear_chat)
     def _clear():
         """Limpa o chat"""
         history.set([])
         ui.update_text_area("prompt", value="")
-        ui.notification_show("Chat limpo com sucesso", type="message", duration=2)
     
     @reactive.Effect
     @reactive.event(input.docs)
     def _ingest_pdfs():
         """Processa PDFs enviados"""
         if not HAVE_RAG_DEPS:
-            ui.notification_show(
-                "⚠️ Instale pypdf, scikit-learn e joblib para ativar o RAG", 
-                type="error",
-                duration=5
-            )
+            ui.notification_show("⚠️ Instale pypdf e sklearn para RAG", type="error", duration=5)
             return
         
         files = input.docs() or []
@@ -1365,32 +1048,12 @@ def server(input: Inputs, output: Outputs, session: Session):
         paths = []
         for f in files:
             src = Path(f["datapath"])
-            dst = DATA_DIR / f["name"]
+            dst = CACHE_DIR / f["name"]
             dst.write_bytes(src.read_bytes())
             paths.append(dst)
         
         total = add_pdfs_to_index(paths)
-        
-        if _S3:
-            ok = s3_push_cache()
-            if ok:
-                ui.notification_show(
-                    f"✅ {len(files)} PDF(s) processados • Total: {total} fragmentos • Sincronizado com S3",
-                    type="success",
-                    duration=4
-                )
-            else:
-                ui.notification_show(
-                    f"✅ {len(files)} PDF(s) processados • Total: {total} fragmentos",
-                    type="success",
-                    duration=4
-                )
-        else:
-            ui.notification_show(
-                f"✅ {len(files)} PDF(s) processados • Total: {total} fragmentos",
-                type="success",
-                duration=4
-            )
+        ui.notification_show(f"✅ {len(files)} PDFs processados • Total: {total} chunks", type="success", duration=4)
     
     @reactive.Effect
     @reactive.event(input.send)
@@ -1401,16 +1064,13 @@ def server(input: Inputs, output: Outputs, session: Session):
             
         q = (input.prompt() or "").strip()
         if not q:
-            ui.notification_show("⚠️ Digite uma mensagem", type="warning", duration=2)
             return
         
         push("user", q)
         ui.update_text_area("prompt", value="")
         
         if client is None:
-            push("assistant", 
-                "⚠️ Claude indisponível. Configure ANTHROPIC_API_KEY e instale o pacote 'anthropic'."
-            )
+            push("assistant", "⚠️ Configure ANTHROPIC_API_KEY para usar o Claude.")
             return
         
         typing.set(True)
@@ -1419,13 +1079,40 @@ def server(input: Inputs, output: Outputs, session: Session):
         try:
             reply = chat_reply_with_context(history(), model)
         except Exception as e:
-            reply = f"❌ Erro ao processar: {str(e)}"
+            reply = f"❌ Erro: {str(e)}"
         finally:
             typing.set(False)
         
         push("assistant", reply)
 
 app = App(app_ui, server)
+        """Renderiza login ou app principal"""
+        if not authenticated():
+            # LOGIN PAGE
+            return ui.div({"class": "login-container"},
+                ui.div({"class": "login-card"},
+                    ui.div({"class": "login-header"},
+                        ui.h1({"class": "login-title"}, "🚀 Origin Software Assistant"),
+                        ui.p({"class": "login-subtitle"}, "Sistema especializado em OriginPro")
+                    ),
+                    
+                    ui.output_ui("login_feedback"),
+                    
+                    ui.div({"class": "form-group"},
+                        ui.span({"class": "form-label"}, "Usuário"),
+                        ui.input_text("username", None, placeholder="Digite seu usuário")
+                    ),
+                    
+                    ui.div({"class": "form-group"},
+                        ui.span({"class": "form-label"}, "Senha"),
+                        ui.input_password("password", None, placeholder="Digite sua senha")
+                    ),
+                    
+                    ui.input_action_button("login_btn", "Entrar", class_="btn btn-primary", style="width: 100%;"),
+                    
+                    ui.hr({"style": "margin: 20px 0; border-color: #2a2a2a;"}),
+                    
+                    ui.div({"style": "text-align: center; color: #666; font-size: 13px
 
 
 
