@@ -412,89 +412,374 @@ try:
 except Exception:
     pass
 
-# ---------------- CSS Customizado ----------------
+# ---------------- CSS Customizado - UI Estilo Claude ----------------
 
 FULL_CSS = """
-:root{
-  --bg:#F7F7F8; --panel:#FFFFFF;
-  --bubble-user:#E5F2FF; --bubble-assistant:#F7F7F8;
-  --border:#E2E2E3; --text:#0F172A; --muted:#6B7280;
-  --accent:#10A37F; --accent-hover:#0E8B6F;
-  --error:#EF4444; --success:#10B981;
-  --shadow: 0 1px 3px rgba(0,0,0,0.08);
-}
-[data-theme='dark']{
-  --bg:#202123; --panel:#2D2E30;
-  --bubble-user:#343642; --bubble-assistant:#444654;
-  --border:#444654; --text:#ECECF1; --muted:#9CA3AF;
-  --accent:#19C37D; --accent-hover:#15A366;
-  --shadow: 0 2px 6px rgba(0,0,0,0.3);
+/* Variáveis de tema inspiradas no Claude */
+:root {
+  --primary-bg: #0a0a0a;
+  --secondary-bg: #1a1a1a;
+  --tertiary-bg: #2a2a2a;
+  --text-primary: #ffffff;
+  --text-secondary: #a0a0a0;
+  --text-muted: #666666;
+  --accent: #c678dd;
+  --accent-hover: #d19ee8;
+  --border: #333333;
+  --input-bg: #1e1e1e;
+  --message-user: #2a3f5f;
+  --message-assistant: #1e1e1e;
+  --code-bg: #282c34;
+  --success: #98c379;
+  --error: #e06c75;
+  --warning: #e5c07b;
+  --info: #61afef;
 }
 
-* { margin: 0; padding: 0; box-sizing: border-box; }
-html, body { height: 100%; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; }
-body { background: var(--bg); color: var(--text); }
+/* Reset e base */
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
 
-/* Login Page */
+html, body {
+  height: 100%;
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', sans-serif;
+  background: var(--primary-bg);
+  color: var(--text-primary);
+  line-height: 1.6;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* Scrollbar estilizada */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: var(--secondary-bg);
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--text-muted);
+}
+
+/* Login Page - Estilo Claude */
 .login-container {
   min-height: 100vh;
   display: flex;
   align-items: center;
   justify-content: center;
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  background: linear-gradient(135deg, #0a0a0a 0%, #1a1a1a 100%);
 }
 
 .login-card {
-  background: var(--panel);
-  border-radius: 20px;
-  box-shadow: 0 20px 60px rgba(0,0,0,0.3);
-  padding: 40px;
+  background: var(--secondary-bg);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  padding: 48px;
   width: 100%;
-  max-width: 400px;
-  margin: 20px;
+  max-width: 440px;
+  box-shadow: 0 20px 60px rgba(0,0,0,0.8);
 }
 
 .login-header {
   text-align: center;
-  margin-bottom: 30px;
+  margin-bottom: 32px;
 }
 
 .login-logo {
-  font-size: 48px;
-  margin-bottom: 16px;
+  font-size: 56px;
+  margin-bottom: 20px;
+  filter: drop-shadow(0 0 20px rgba(198, 120, 221, 0.5));
 }
 
 .login-title {
-  font-size: 24px;
-  font-weight: 700;
+  font-size: 28px;
+  font-weight: 600;
   margin-bottom: 8px;
   background: linear-gradient(135deg, var(--accent), var(--accent-hover));
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
+  letter-spacing: -0.5px;
 }
 
 .login-subtitle {
-  color: var(--muted);
+  color: var(--text-secondary);
   font-size: 14px;
+  font-weight: 400;
 }
 
-/* Main App */
+/* Header estilo Claude */
 .app-header {
-  background: var(--panel);
+  background: var(--secondary-bg);
   border-bottom: 1px solid var(--border);
-  padding: 16px 24px;
+  padding: 12px 24px;
   display: flex;
   justify-content: space-between;
   align-items: center;
-  box-shadow: var(--shadow);
+  backdrop-filter: blur(10px);
+  position: sticky;
+  top: 0;
+  z-index: 100;
 }
 
 .app-header h1 {
-  font-size: 20px;
-  margin: 0;
+  font-size: 18px;
+  font-weight: 600;
+  letter-spacing: -0.3px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
 }
 
-/* Form Elements */
+.app-header h1::before {
+  content: "✨";
+  font-size: 20px;
+  filter: drop-shadow(0 0 10px rgba(198, 120, 221, 0.5));
+}
+
+/* Chat Area - Estilo Claude */
+.chat-wrapper {
+  background: var(--primary-bg);
+  height: calc(100vh - 200px);
+  overflow-y: auto;
+  padding: 24px 0;
+}
+
+.chat-container {
+  max-width: 800px;
+  margin: 0 auto;
+  padding: 0 20px;
+}
+
+/* Mensagens estilo Claude */
+.message {
+  display: flex;
+  gap: 16px;
+  margin-bottom: 32px;
+  animation: fadeInUp 0.3s ease;
+}
+
+@keyframes fadeInUp {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.message.user {
+  flex-direction: row-reverse;
+}
+
+.avatar {
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 600;
+  font-size: 12px;
+  flex-shrink: 0;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+}
+
+.message.assistant .avatar {
+  background: linear-gradient(135deg, var(--accent), var(--accent-hover));
+  color: white;
+}
+
+.message.user .avatar {
+  background: var(--message-user);
+  color: white;
+}
+
+.message-content {
+  flex: 1;
+  max-width: 85%;
+}
+
+.role {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-secondary);
+  margin-bottom: 6px;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+}
+
+.message.user .role {
+  text-align: right;
+}
+
+.bubble {
+  background: var(--message-assistant);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 16px 20px;
+  font-size: 15px;
+  line-height: 1.7;
+  box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+}
+
+.message.user .bubble {
+  background: var(--message-user);
+  border-color: rgba(198, 120, 221, 0.2);
+}
+
+/* Composer estilo Claude */
+.composer-wrapper {
+  background: var(--secondary-bg);
+  border-top: 1px solid var(--border);
+  padding: 20px;
+  position: sticky;
+  bottom: 0;
+}
+
+.composer {
+  max-width: 800px;
+  margin: 0 auto;
+  display: flex;
+  gap: 12px;
+  align-items: flex-end;
+}
+
+.input-group {
+  flex: 1;
+}
+
+/* Textarea estilo Claude */
+textarea {
+  width: 100%;
+  background: var(--input-bg);
+  color: var(--text-primary);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 14px 18px;
+  font-size: 15px;
+  line-height: 1.5;
+  resize: none;
+  font-family: inherit;
+  transition: all 0.2s ease;
+}
+
+textarea:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent), 0 0 20px rgba(198, 120, 221, 0.1);
+}
+
+textarea::placeholder {
+  color: var(--text-muted);
+}
+
+/* Select estilo Claude */
+select {
+  background: var(--input-bg);
+  color: var(--text-primary);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px 12px;
+  font-size: 13px;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+select:hover {
+  border-color: var(--accent);
+}
+
+select:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent);
+}
+
+/* Buttons estilo Claude */
+.btn {
+  padding: 10px 20px;
+  border-radius: 8px;
+  border: none;
+  font-weight: 500;
+  font-size: 14px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  letter-spacing: 0.3px;
+}
+
+.btn-primary {
+  background: var(--accent);
+  color: white;
+  box-shadow: 0 2px 8px rgba(198, 120, 221, 0.3);
+}
+
+.btn-primary:hover {
+  background: var(--accent-hover);
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(198, 120, 221, 0.4);
+}
+
+.btn-secondary {
+  background: var(--tertiary-bg);
+  color: var(--text-primary);
+  border: 1px solid var(--border);
+}
+
+.btn-secondary:hover {
+  background: var(--input-bg);
+  border-color: var(--accent);
+}
+
+.btn-logout {
+  background: transparent;
+  color: var(--text-secondary);
+  border: 1px solid var(--border);
+  padding: 6px 12px;
+  font-size: 13px;
+}
+
+.btn-logout:hover {
+  color: var(--error);
+  border-color: var(--error);
+}
+
+/* Form elements estilo Claude */
+input[type="text"],
+input[type="password"],
+input[type="email"],
+input[type="number"] {
+  width: 100%;
+  padding: 12px 16px;
+  background: var(--input-bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--text-primary);
+  font-size: 15px;
+  transition: all 0.2s;
+}
+
+input:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent);
+}
+
 .form-group {
   margin-bottom: 20px;
 }
@@ -502,176 +787,148 @@ body { background: var(--bg); color: var(--text); }
 .form-label {
   display: block;
   margin-bottom: 8px;
-  font-size: 14px;
+  font-size: 13px;
   font-weight: 500;
-  color: var(--text);
+  color: var(--text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
 }
 
-input[type="text"],
-input[type="password"],
-input[type="email"],
-input[type="number"],
-select,
-textarea {
-  width: 100%;
-  padding: 12px 16px;
-  border: 2px solid var(--border);
-  border-radius: 10px;
-  font-size: 15px;
-  background: var(--bg);
-  color: var(--text);
-  transition: all 0.2s;
+/* Knowledge Base estilo Claude */
+.kb-section {
+  background: var(--secondary-bg);
+  padding: 16px 24px;
+  border-bottom: 1px solid var(--border);
 }
 
-input:focus,
-select:focus,
-textarea:focus {
-  outline: none;
-  border-color: var(--accent);
-  box-shadow: 0 0 0 3px rgba(25,195,125,0.1);
+.kb-card {
+  background: var(--tertiary-bg);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 16px;
 }
 
-/* Buttons */
-.btn {
-  padding: 12px 24px;
-  border-radius: 10px;
-  border: none;
+.kb-info {
+  font-size: 13px;
+  color: var(--text-secondary);
+  margin-top: 8px;
+  padding: 8px 12px;
+  background: var(--input-bg);
+  border-radius: 6px;
+  border: 1px solid var(--border);
+}
+
+/* Admin Panel estilo Claude */
+.admin-panel {
+  background: var(--secondary-bg);
+  border-radius: 12px;
+  padding: 24px;
+  margin: 20px;
+  border: 1px solid var(--border);
+}
+
+.admin-header {
+  margin-bottom: 24px;
+  padding-bottom: 16px;
+  border-bottom: 1px solid var(--border);
+}
+
+.admin-header h2 {
+  font-size: 20px;
   font-weight: 600;
-  font-size: 15px;
-  cursor: pointer;
+  letter-spacing: -0.3px;
+}
+
+.user-card {
+  background: var(--tertiary-bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 16px;
+  margin-bottom: 12px;
   transition: all 0.2s;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 8px;
-  text-align: center;
 }
 
-.btn-primary {
-  background: linear-gradient(135deg, var(--accent), var(--accent-hover));
-  color: white;
-  width: 100%;
-}
-
-.btn-primary:hover {
-  transform: translateY(-2px);
-  box-shadow: 0 8px 20px rgba(25,195,125,0.3);
-}
-
-.btn-secondary {
-  background: var(--bg);
-  color: var(--text);
-  border: 2px solid var(--border);
-  width: 100%;
-}
-
-.btn-secondary:hover {
-  background: var(--panel);
+.user-card:hover {
   border-color: var(--accent);
+  box-shadow: 0 2px 8px rgba(198, 120, 221, 0.1);
 }
 
-.btn-logout {
-  background: rgba(239,68,68,0.1);
-  color: var(--error);
-  border: 1px solid var(--error);
-  padding: 8px 16px;
-  width: auto;
-}
-
-/* Messages */
+/* Alerts estilo Claude */
 .alert {
   padding: 12px 16px;
   border-radius: 8px;
   margin-bottom: 20px;
   font-size: 14px;
+  border: 1px solid;
 }
 
 .alert-error {
-  background: rgba(239,68,68,0.1);
+  background: rgba(224, 108, 117, 0.1);
   color: var(--error);
-  border: 1px solid rgba(239,68,68,0.2);
+  border-color: rgba(224, 108, 117, 0.3);
 }
 
 .alert-success {
-  background: rgba(16,185,129,0.1);
+  background: rgba(152, 195, 121, 0.1);
   color: var(--success);
-  border: 1px solid rgba(16,185,129,0.2);
+  border-color: rgba(152, 195, 121, 0.3);
 }
 
 .alert-info {
-  background: rgba(59,130,246,0.1);
-  color: #3b82f6;
-  border: 1px solid rgba(59,130,246,0.2);
+  background: rgba(97, 175, 239, 0.1);
+  color: var(--info);
+  border-color: rgba(97, 175, 239, 0.3);
 }
 
-/* Admin Panel */
-.admin-panel {
-  background: var(--panel);
-  border-radius: 12px;
-  padding: 24px;
-  margin: 20px;
-  box-shadow: var(--shadow);
+/* Animações */
+@keyframes typing {
+  0%, 60%, 100% { opacity: 0.2; }
+  30% { opacity: 1; }
 }
 
-.admin-header {
-  margin-bottom: 20px;
-  padding-bottom: 16px;
-  border-bottom: 2px solid var(--border);
+.typing-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--accent);
+  animation: typing 1.4s infinite;
 }
 
-.user-card {
-  background: var(--bg);
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  padding: 16px;
-  margin-bottom: 12px;
-}
-
-.user-info {
-  margin-bottom: 8px;
-}
-
-.user-name {
+/* Markdown styling */
+.content h1, .content h2, .content h3 {
+  margin: 1rem 0 0.5rem;
   font-weight: 600;
-  font-size: 16px;
-  margin-bottom: 4px;
+  line-height: 1.3;
+  color: var(--text-primary);
 }
 
-.user-meta {
-  font-size: 13px;
-  color: var(--muted);
+.content code {
+  background: var(--code-bg);
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-size: 0.9em;
+  font-family: 'Fira Code', 'Monaco', monospace;
+  color: var(--accent);
 }
 
-.status-badge {
-  display: inline-block;
-  padding: 4px 12px;
-  border-radius: 20px;
-  font-size: 12px;
-  font-weight: 500;
+.content pre {
+  background: var(--code-bg);
+  padding: 16px;
+  border-radius: 8px;
+  overflow-x: auto;
+  margin: 1rem 0;
+  border: 1px solid var(--border);
 }
 
-.status-active {
-  background: rgba(16,185,129,0.1);
-  color: var(--success);
+.content a {
+  color: var(--accent);
+  text-decoration: none;
+  border-bottom: 1px solid transparent;
+  transition: border-color 0.2s;
 }
 
-.status-inactive {
-  background: rgba(239,68,68,0.1);
-  color: var(--error);
-}
-
-/* Content Area */
-.content-area {
-  padding: 20px;
-  background: var(--bg);
-  min-height: calc(100vh - 80px);
-}
-
-/* Divider */
-.divider {
-  height: 1px;
-  background: var(--border);
-  margin: 20px 0;
+.content a:hover {
+  border-bottom-color: var(--accent);
 }
 """
 
