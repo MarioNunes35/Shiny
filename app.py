@@ -1461,8 +1461,9 @@ def server(input: Inputs, output: Outputs, session: Session):
                 ui.div({"class": "user-card"},
                     ui.div(style="display: flex; justify-content: space-between; flex-wrap: wrap; gap: 4px;",
                         ui.strong(user[0] + (" Admin" if user[6] else "")),
-                        ui.span("Ativo" if user[4] else "Inativo", style="color: #98c379;" if user[4] else "color: #e06c75;")
-                    ),
+                        ui.span(
+                                {"style": "color: #98c379;" if user[4] else "color: #e06c75;"},"Ativo" if user[4] else "Inativo"
+                                ),
                     ui.div(style="font-size: 11px; color: #666; margin-top: 4px;",
                         f"Email: {user[1] or 'sem email'} | Exp: {user[5][:10] if user[5] else 'N/A'}"
                     )
