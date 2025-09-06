@@ -1,5 +1,5 @@
-# app_origin_fixed.py - Origin Software Assistant com persistência corrigida
-# Interface inspirada no Claude Code UI
+# app_mobile_responsive.py - Origin Software Assistant com design responsivo
+# Interface mobile-first inspirada no Claude Code UI
 
 from shiny import App, ui, render, reactive, Inputs, Outputs, Session
 from dotenv import load_dotenv
@@ -17,15 +17,11 @@ API_KEY = os.getenv("ANTHROPIC_API_KEY")
 HAS_KEY = bool(API_KEY)
 
 # Paths para o sistema - USANDO CAMINHO PERSISTENTE
-# No Posit Connect, use /home/shiny para persistência
 if os.path.exists("/home/shiny"):
-    # Ambiente Posit Connect
     BASE_DIR = Path("/home/shiny/.origin_assistant")
 else:
-    # Ambiente local
     BASE_DIR = Path.home() / ".origin_assistant"
 
-# Criar estrutura de diretórios
 DATA_DIR = BASE_DIR / "data"
 AUTH_DIR = DATA_DIR / "auth"
 USER_DB_PATH = AUTH_DIR / "users.db"
@@ -50,7 +46,6 @@ def create_user_db():
         con = sqlite3.connect(str(USER_DB_PATH))
         cur = con.cursor()
         
-        # Criar tabela
         cur.execute("""
             CREATE TABLE IF NOT EXISTS users(
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -65,7 +60,6 @@ def create_user_db():
             );
         """)
         
-        # Verificar se admin existe
         cur.execute("SELECT id FROM users WHERE username = ?", ("admin",))
         if not cur.fetchone():
             admin_pass = hash_password("admin123")
@@ -105,24 +99,20 @@ def validate_user(username: str, password: str) -> Tuple[bool, str, bool]:
         
         password_hash, active, subscription_expires, is_admin = result
         
-        # Verificar senha
         if hash_password(password) != password_hash:
             con.close()
             return False, "Usuário ou senha incorretos", False
         
-        # Verificar se usuário está ativo
         if not active:
             con.close()
             return False, "Usuário desativado. Entre em contato com o suporte.", False
         
-        # Verificar expiração
         if subscription_expires:
             expiry = datetime.fromisoformat(subscription_expires)
             if datetime.utcnow() > expiry:
                 con.close()
                 return False, "Assinatura expirada. Renove seu acesso.", False
         
-        # Atualizar último login
         cur.execute(
             "UPDATE users SET last_login = ? WHERE username = ?",
             (datetime.utcnow().isoformat(), username)
@@ -175,7 +165,6 @@ def list_users():
         print(f"[AUTH ERROR] Erro ao listar usuários: {e}")
         return []
 
-# Criar banco de dados na inicialização
 create_user_db()
 
 # ---------------- Claude Integration ----------------
@@ -198,7 +187,6 @@ RAG_FALLBACK = (os.getenv("RAG_FALLBACK", "auto") or "auto").lower()
 RAG_MIN_TOPSCORE = float(os.getenv("RAG_MIN_TOPSCORE", "0.18"))
 RAG_MIN_CTXCHARS = int(os.getenv("RAG_MIN_CTXCHARS", "300"))
 
-# RAG Dependencies
 HAVE_RAG_DEPS = True
 try:
     from pypdf import PdfReader
@@ -215,7 +203,6 @@ except Exception:
 
 print(f"[BOOT] RAG={HAVE_RAG_DEPS} | Claude={(client is not None)}")
 
-# Paths for RAG
 CHUNKS_JSON = CACHE_DIR / "chunks.json"
 VECTORIZER_JOBLIB = CACHE_DIR / "tfidf_vectorizer.joblib"
 MATRIX_JOBLIB = CACHE_DIR / "tfidf_matrix.joblib"
@@ -336,7 +323,6 @@ def chat_reply_with_context(history, model):
 
     question = next((m["content"] for m in reversed(history) if m["role"]=="user"), "")
 
-    # RAG com contexto
     if HAVE_RAG_DEPS:
         ctx, cites, stats = build_context(question)
     else:
@@ -344,7 +330,6 @@ def chat_reply_with_context(history, model):
 
     use_rag = bool(ctx) and not rag_should_fallback(stats)
 
-    # SYSTEM PROMPT FOCADO NO ORIGINPRO
     if use_rag:
         system = (
             "Você é o Origin Software Assistant, um especialista EXCLUSIVO no software OriginPro para análise de dados e criação de gráficos científicos. "
@@ -389,9 +374,9 @@ def chat_reply_with_context(history, model):
     
     return answer
 
-# ---------------- CSS Estilo Claude Code UI ----------------
+# ---------------- CSS Mobile Responsive ----------------
 
-CLAUDE_CODE_UI_CSS = """
+MOBILE_RESPONSIVE_CSS = """
 /* Reset e Base */
 * {
     margin: 0;
@@ -405,11 +390,12 @@ html, body {
     background: #0e0e0e;
     color: #e0e0e0;
     line-height: 1.6;
+    overflow-x: hidden;
 }
 
 /* Scrollbar */
 ::-webkit-scrollbar {
-    width: 8px;
+    width: 6px;
 }
 
 ::-webkit-scrollbar-track {
@@ -418,46 +404,105 @@ html, body {
 
 ::-webkit-scrollbar-thumb {
     background: #3a3a3a;
-    border-radius: 4px;
+    border-radius: 3px;
 }
 
-/* Login Page */
+/* Viewport Meta Detection */
+@media (max-width: 768px) {
+    html {
+        font-size: 14px;
+    }
+}
+
+/* Login Page - Mobile First */
 .login-container {
     min-height: 100vh;
     display: flex;
     align-items: center;
     justify-content: center;
     background: #0e0e0e;
+    padding: 20px;
 }
 
 .login-card {
     background: #1a1a1a;
     border: 1px solid #2a2a2a;
     border-radius: 12px;
-    padding: 40px;
+    padding: 24px;
     width: 100%;
     max-width: 400px;
     box-shadow: 0 10px 40px rgba(0,0,0,0.8);
 }
 
+@media (max-width: 480px) {
+    .login-card {
+        padding: 20px;
+        margin: 10px;
+    }
+}
+
 .login-header {
     text-align: center;
-    margin-bottom: 32px;
+    margin-bottom: 24px;
 }
 
 .login-title {
-    font-size: 24px;
+    font-size: 20px;
     font-weight: 600;
     margin-bottom: 8px;
     color: #fff;
 }
 
-.login-subtitle {
-    color: #888;
-    font-size: 14px;
+@media (max-width: 480px) {
+    .login-title {
+        font-size: 18px;
+    }
 }
 
-/* Sidebar */
+.login-subtitle {
+    color: #888;
+    font-size: 13px;
+}
+
+/* Mobile Navigation */
+.mobile-header {
+    display: none;
+    background: #141414;
+    border-bottom: 1px solid #2a2a2a;
+    padding: 12px 16px;
+    position: sticky;
+    top: 0;
+    z-index: 100;
+    justify-content: space-between;
+    align-items: center;
+}
+
+@media (max-width: 768px) {
+    .mobile-header {
+        display: flex;
+    }
+}
+
+.mobile-title {
+    font-size: 16px;
+    font-weight: 600;
+    color: #fff;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.mobile-menu-btn {
+    background: transparent;
+    border: 1px solid #3a3a3a;
+    border-radius: 6px;
+    color: #e0e0e0;
+    padding: 8px 12px;
+    font-size: 12px;
+    cursor: pointer;
+}
+
+/* Sidebar - Mobile Responsive */
 .sidebar {
     width: 260px;
     background: #141414;
@@ -468,6 +513,37 @@ html, body {
     position: fixed;
     left: 0;
     top: 0;
+    z-index: 200;
+    transition: transform 0.3s ease;
+}
+
+@media (max-width: 768px) {
+    .sidebar {
+        transform: translateX(-100%);
+        width: 280px;
+        box-shadow: 2px 0 10px rgba(0,0,0,0.5);
+    }
+    
+    .sidebar.open {
+        transform: translateX(0);
+    }
+}
+
+.sidebar-overlay {
+    display: none;
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: rgba(0,0,0,0.6);
+    z-index: 150;
+}
+
+@media (max-width: 768px) {
+    .sidebar-overlay.show {
+        display: block;
+    }
 }
 
 .sidebar-header {
@@ -484,6 +560,12 @@ html, body {
     gap: 8px;
 }
 
+.sidebar-user {
+    font-size: 12px;
+    color: #666;
+    margin-top: 4px;
+}
+
 .sessions-list {
     flex: 1;
     overflow-y: auto;
@@ -491,7 +573,7 @@ html, body {
 }
 
 .session-item {
-    padding: 10px 12px;
+    padding: 12px;
     margin-bottom: 4px;
     background: transparent;
     border: 1px solid transparent;
@@ -500,6 +582,7 @@ html, body {
     cursor: pointer;
     font-size: 14px;
     transition: all 0.2s;
+    word-wrap: break-word;
 }
 
 .session-item:hover {
@@ -515,7 +598,7 @@ html, body {
 
 .new-session-btn {
     margin: 8px;
-    padding: 10px;
+    padding: 12px;
     background: #1e1e1e;
     border: 1px solid #3a3a3a;
     border-radius: 6px;
@@ -523,6 +606,7 @@ html, body {
     cursor: pointer;
     text-align: center;
     transition: all 0.2s;
+    font-size: 14px;
 }
 
 .new-session-btn:hover {
@@ -530,13 +614,20 @@ html, body {
     border-color: #4a4a4a;
 }
 
-/* Main Content */
+/* Main Content - Mobile Responsive */
 .main-content {
     margin-left: 260px;
     height: 100vh;
     display: flex;
     flex-direction: column;
     background: #0e0e0e;
+}
+
+@media (max-width: 768px) {
+    .main-content {
+        margin-left: 0;
+        padding-top: 0;
+    }
 }
 
 .header-bar {
@@ -546,6 +637,12 @@ html, body {
     display: flex;
     justify-content: space-between;
     align-items: center;
+}
+
+@media (max-width: 768px) {
+    .header-bar {
+        display: none;
+    }
 }
 
 .header-title {
@@ -561,11 +658,66 @@ html, body {
     gap: 8px;
 }
 
-/* Chat Area */
+/* Knowledge Base - Mobile Responsive */
+.kb-section {
+    padding: 12px 16px;
+    background: #141414;
+    border-bottom: 1px solid #2a2a2a;
+}
+
+@media (max-width: 768px) {
+    .kb-section {
+        padding: 8px 12px;
+    }
+}
+
+.kb-row {
+    display: flex;
+    gap: 12px;
+    align-items: center;
+    flex-wrap: wrap;
+}
+
+@media (max-width: 768px) {
+    .kb-row {
+        flex-direction: column;
+        gap: 8px;
+        align-items: stretch;
+    }
+}
+
+.kb-upload {
+    flex: 1;
+    min-width: 200px;
+}
+
+.kb-info {
+    font-size: 12px;
+    color: #888;
+    white-space: nowrap;
+}
+
+@media (max-width: 768px) {
+    .kb-info {
+        font-size: 11px;
+        white-space: normal;
+        text-align: center;
+    }
+}
+
+/* Chat Area - Mobile Responsive */
 .chat-area {
     flex: 1;
     overflow-y: auto;
-    padding: 20px;
+    padding: 16px;
+    padding-bottom: 120px; /* Espaço para composer fixo */
+}
+
+@media (max-width: 768px) {
+    .chat-area {
+        padding: 12px;
+        padding-bottom: 140px;
+    }
 }
 
 .chat-container {
@@ -573,23 +725,38 @@ html, body {
     margin: 0 auto;
 }
 
-/* Messages */
+/* Messages - Mobile Responsive */
 .message {
-    margin-bottom: 24px;
+    margin-bottom: 20px;
     display: flex;
-    gap: 12px;
+    gap: 10px;
+}
+
+@media (max-width: 768px) {
+    .message {
+        gap: 8px;
+        margin-bottom: 16px;
+    }
 }
 
 .message-avatar {
-    width: 32px;
-    height: 32px;
+    width: 28px;
+    height: 28px;
     border-radius: 6px;
     display: flex;
     align-items: center;
     justify-content: center;
-    font-size: 12px;
+    font-size: 11px;
     font-weight: 600;
     flex-shrink: 0;
+}
+
+@media (max-width: 768px) {
+    .message-avatar {
+        width: 24px;
+        height: 24px;
+        font-size: 10px;
+    }
 }
 
 .message.user .message-avatar {
@@ -604,10 +771,11 @@ html, body {
 
 .message-content {
     flex: 1;
+    min-width: 0; /* Permite quebra de texto */
 }
 
 .message-role {
-    font-size: 12px;
+    font-size: 11px;
     font-weight: 600;
     color: #888;
     margin-bottom: 4px;
@@ -618,10 +786,19 @@ html, body {
     background: #1a1a1a;
     border: 1px solid #2a2a2a;
     border-radius: 8px;
-    padding: 12px 16px;
+    padding: 12px 14px;
     color: #e0e0e0;
     font-size: 14px;
-    line-height: 1.6;
+    line-height: 1.5;
+    word-wrap: break-word;
+    overflow-wrap: break-word;
+}
+
+@media (max-width: 768px) {
+    .message-text {
+        font-size: 13px;
+        padding: 10px 12px;
+    }
 }
 
 .message.user .message-text {
@@ -629,11 +806,24 @@ html, body {
     border-color: #2a3f5f;
 }
 
-/* Composer */
+/* Composer - Mobile Fixed */
 .composer {
     background: #141414;
     border-top: 1px solid #2a2a2a;
-    padding: 16px 20px;
+    padding: 12px 16px;
+    position: fixed;
+    bottom: 0;
+    left: 260px;
+    right: 0;
+    z-index: 50;
+}
+
+@media (max-width: 768px) {
+    .composer {
+        left: 0;
+        padding: 10px 12px;
+        padding-bottom: calc(10px + env(safe-area-inset-bottom));
+    }
 }
 
 .composer-inner {
@@ -643,24 +833,55 @@ html, body {
 
 .input-wrapper {
     display: flex;
-    gap: 12px;
+    gap: 8px;
     align-items: flex-end;
+}
+
+@media (max-width: 480px) {
+    .input-wrapper {
+        flex-direction: column;
+        gap: 8px;
+        align-items: stretch;
+    }
 }
 
 .input-container {
     flex: 1;
+    min-width: 0;
 }
 
+.composer-controls {
+    display: flex;
+    gap: 8px;
+    margin-top: 8px;
+    flex-wrap: wrap;
+}
+
+@media (max-width: 480px) {
+    .composer-controls {
+        justify-content: space-between;
+    }
+}
+
+/* Textarea */
 textarea {
     width: 100%;
     background: #1a1a1a;
     color: #e0e0e0;
     border: 1px solid #2a2a2a;
     border-radius: 8px;
-    padding: 12px;
+    padding: 10px;
     font-size: 14px;
     resize: none;
     font-family: inherit;
+    min-height: 44px;
+}
+
+@media (max-width: 768px) {
+    textarea {
+        font-size: 16px; /* Previne zoom no iOS */
+        padding: 12px;
+    }
 }
 
 textarea:focus {
@@ -669,21 +890,37 @@ textarea:focus {
     box-shadow: 0 0 0 1px #3a3a3a;
 }
 
-/* Buttons */
+/* Buttons - Mobile Responsive */
 .btn {
-    padding: 10px 20px;
+    padding: 10px 16px;
     background: #2a2a2a;
     color: #e0e0e0;
     border: 1px solid #3a3a3a;
     border-radius: 6px;
     cursor: pointer;
-    font-size: 14px;
+    font-size: 13px;
     transition: all 0.2s;
+    white-space: nowrap;
+    min-height: 44px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+@media (max-width: 768px) {
+    .btn {
+        font-size: 14px;
+        padding: 12px 16px;
+    }
 }
 
 .btn:hover {
     background: #3a3a3a;
     border-color: #4a4a4a;
+}
+
+.btn:active {
+    transform: translateY(1px);
 }
 
 .btn-primary {
@@ -702,6 +939,7 @@ textarea:focus {
     border: 1px solid #3a3a3a;
     padding: 6px 12px;
     font-size: 12px;
+    min-height: auto;
 }
 
 .btn-logout:hover {
@@ -709,22 +947,51 @@ textarea:focus {
     color: #e06c75;
 }
 
-/* Forms */
+/* Forms - Mobile Responsive */
 input[type="text"],
 input[type="password"],
-input[type="email"] {
+input[type="email"],
+input[type="number"] {
     width: 100%;
-    padding: 10px;
+    padding: 12px;
     background: #0e0e0e;
     border: 1px solid #2a2a2a;
     border-radius: 6px;
     color: #e0e0e0;
     font-size: 14px;
+    min-height: 44px;
+}
+
+@media (max-width: 768px) {
+    input[type="text"],
+    input[type="password"],
+    input[type="email"],
+    input[type="number"] {
+        font-size: 16px; /* Previne zoom no iOS */
+    }
 }
 
 input:focus {
     outline: none;
     border-color: #3a3a3a;
+}
+
+select {
+    width: 100%;
+    padding: 10px;
+    background: #1a1a1a;
+    border: 1px solid #2a2a2a;
+    border-radius: 6px;
+    color: #e0e0e0;
+    font-size: 13px;
+    min-height: 40px;
+}
+
+@media (max-width: 768px) {
+    select {
+        font-size: 14px;
+        min-height: 44px;
+    }
 }
 
 .form-group {
@@ -738,25 +1005,82 @@ input:focus {
     color: #888;
 }
 
-/* Knowledge Base */
-.kb-section {
-    padding: 16px 20px;
-    background: #141414;
-    border-bottom: 1px solid #2a2a2a;
-}
-
-.kb-info {
-    font-size: 13px;
-    color: #888;
-    margin-top: 8px;
-}
-
-/* Alerts */
-.alert {
-    padding: 10px 14px;
+/* File Input - Mobile Friendly */
+input[type="file"] {
+    width: 100%;
+    padding: 8px;
+    background: #1a1a1a;
+    border: 1px solid #2a2a2a;
     border-radius: 6px;
-    margin-bottom: 16px;
+    color: #e0e0e0;
     font-size: 13px;
+}
+
+@media (max-width: 768px) {
+    input[type="file"] {
+        font-size: 14px;
+        padding: 10px;
+    }
+}
+
+/* Admin Panel - Mobile Responsive */
+.admin-panel {
+    background: #141414;
+    border: 1px solid #2a2a2a;
+    border-radius: 8px;
+    padding: 16px;
+    margin: 16px;
+    display: none; /* Hidden by default */
+}
+
+@media (max-width: 768px) {
+    .admin-panel {
+        margin: 12px;
+        padding: 12px;
+    }
+}
+
+.admin-panel.show {
+    display: block;
+}
+
+.admin-form-row {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+    gap: 8px;
+    margin-bottom: 12px;
+}
+
+@media (max-width: 768px) {
+    .admin-form-row {
+        grid-template-columns: 1fr;
+    }
+}
+
+.user-card {
+    background: #1a1a1a;
+    border: 1px solid #2a2a2a;
+    border-radius: 6px;
+    padding: 12px;
+    margin-bottom: 8px;
+    font-size: 13px;
+    word-wrap: break-word;
+}
+
+@media (max-width: 768px) {
+    .user-card {
+        font-size: 12px;
+        padding: 10px;
+    }
+}
+
+/* Alerts - Mobile Responsive */
+.alert {
+    padding: 10px 12px;
+    border-radius: 6px;
+    margin-bottom: 12px;
+    font-size: 13px;
+    word-wrap: break-word;
 }
 
 .alert-error {
@@ -771,36 +1095,27 @@ input:focus {
     border: 1px solid rgba(152, 195, 121, 0.3);
 }
 
-/* Admin Panel */
-.admin-panel {
-    background: #141414;
-    border: 1px solid #2a2a2a;
-    border-radius: 8px;
-    padding: 20px;
-    margin: 20px;
-}
-
-.user-card {
-    background: #1a1a1a;
-    border: 1px solid #2a2a2a;
-    border-radius: 6px;
-    padding: 12px;
-    margin-bottom: 8px;
-}
-
-/* Loading dots */
+/* Loading dots - Mobile */
 .typing-dots {
     display: flex;
     gap: 4px;
     padding: 12px;
+    justify-content: flex-start;
 }
 
 .typing-dot {
-    width: 8px;
-    height: 8px;
+    width: 6px;
+    height: 6px;
     border-radius: 50%;
     background: #667eea;
     animation: typing 1.4s infinite;
+}
+
+@media (max-width: 768px) {
+    .typing-dot {
+        width: 5px;
+        height: 5px;
+    }
 }
 
 @keyframes typing {
@@ -810,12 +1125,112 @@ input:focus {
 
 .typing-dot:nth-child(2) { animation-delay: 0.2s; }
 .typing-dot:nth-child(3) { animation-delay: 0.4s; }
+
+/* Welcome Message - Mobile */
+.welcome-message {
+    text-align: center;
+    padding: 30px 20px;
+    color: #666;
+}
+
+@media (max-width: 768px) {
+    .welcome-message {
+        padding: 20px 15px;
+    }
+}
+
+.welcome-title {
+    font-size: 20px;
+    margin-bottom: 16px;
+    color: #fff;
+}
+
+@media (max-width: 768px) {
+    .welcome-title {
+        font-size: 18px;
+    }
+}
+
+.welcome-features {
+    max-width: 400px;
+    margin: 16px auto;
+    text-align: left;
+    font-size: 14px;
+    line-height: 1.8;
+}
+
+@media (max-width: 768px) {
+    .welcome-features {
+        font-size: 13px;
+        margin: 12px auto;
+    }
+}
+
+/* Utility Classes */
+.hidden-mobile {
+    display: block;
+}
+
+@media (max-width: 768px) {
+    .hidden-mobile {
+        display: none;
+    }
+}
+
+.show-mobile {
+    display: none;
+}
+
+@media (max-width: 768px) {
+    .show-mobile {
+        display: block;
+    }
+}
+
+/* Safe area for iOS */
+@supports (padding: max(0px)) {
+    .composer {
+        padding-bottom: max(12px, env(safe-area-inset-bottom));
+    }
+    
+    @media (max-width: 768px) {
+        .composer {
+            padding-bottom: max(10px, env(safe-area-inset-bottom));
+        }
+    }
+}
+
+/* Touch targets */
+@media (hover: none) {
+    .btn, .session-item, .new-session-btn {
+        min-height: 44px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+    }
+}
+
+/* Landscape mode adjustments */
+@media (max-width: 768px) and (orientation: landscape) {
+    .login-card {
+        max-height: 90vh;
+        overflow-y: auto;
+    }
+    
+    .chat-area {
+        padding-bottom: 100px;
+    }
+    
+    .composer {
+        padding: 8px 12px;
+    }
+}
 """
 
-# ---------------- Interface do App ----------------
+# ---------------- Interface Mobile-First ----------------
 
 app_ui = ui.page_fluid(
-    ui.tags.style(CLAUDE_CODE_UI_CSS),
+    ui.tags.style(MOBILE_RESPONSIVE_CSS),
     ui.output_ui("main_content")
 )
 
@@ -830,20 +1245,24 @@ def server(input: Inputs, output: Outputs, session: Session):
     history = reactive.Value([])
     typing = reactive.Value(False)
     
+    # Estado mobile
+    sidebar_open = reactive.Value(False)
+    admin_panel_open = reactive.Value(False)
+    
     def push(role, content):
         history.set(history() + [{"role": role, "content": content}])
     
     @output
     @render.ui
     def main_content():
-        """Renderiza login ou app principal"""
+        """Renderiza login ou app principal com design mobile-first"""
         if not authenticated():
-            # LOGIN PAGE
+            # LOGIN PAGE - MOBILE OPTIMIZED
             return ui.div({"class": "login-container"},
                 ui.div({"class": "login-card"},
                     ui.div({"class": "login-header"},
-                        ui.h1({"class": "login-title"}, "🚀 Origin Software Assistant"),
-                        ui.p({"class": "login-subtitle"}, "Sistema especializado em OriginPro")
+                        ui.h1({"class": "login-title"}, "🚀 Origin Assistant"),
+                        ui.p({"class": "login-subtitle"}, "Especialista em OriginPro")
                     ),
                     
                     ui.output_ui("login_feedback"),
@@ -858,25 +1277,46 @@ def server(input: Inputs, output: Outputs, session: Session):
                         ui.input_password("password", None, placeholder="Digite sua senha")
                     ),
                     
-                    ui.input_action_button("login_btn", "Entrar", class_="btn btn-primary", style="width: 100%;"),
+                    ui.input_action_button("login_btn", "Entrar", 
+                        class_="btn btn-primary", 
+                        style="width: 100%; margin-bottom: 16px;"
+                    ),
                     
-                    ui.hr({"style": "margin: 20px 0; border-color: #2a2a2a;"}),
+                    ui.hr({"style": "margin: 16px 0; border-color: #2a2a2a;"}),
                     
-                    ui.div({"style": "text-align: center; color: #666; font-size: 13px;"},
-                        "Credenciais demo: admin / admin123"
+                    ui.div({"style": "text-align: center; color: #666; font-size: 12px;"},
+                        "Demo: admin / admin123"
                     )
                 )
             )
         else:
-            # APP PRINCIPAL COM SIDEBAR
+            # APP PRINCIPAL - MOBILE FIRST DESIGN
             return ui.TagList(
-                # Sidebar estilo Claude Code UI
-                ui.div({"class": "sidebar"},
+                # Mobile Header (only visible on mobile)
+                ui.div({"class": "mobile-header"},
+                    ui.div({"class": "mobile-title"},
+                        "🚀 Origin Assistant"
+                    ),
+                    ui.div({"style": "display: flex; gap: 8px;"},
+                        ui.input_action_button("toggle_sidebar", "☰", 
+                            class_="mobile-menu-btn"
+                        ),
+                        ui.input_action_button("logout_btn_mobile", "Sair",
+                            class_="mobile-menu-btn"
+                        )
+                    )
+                ),
+                
+                # Sidebar Overlay (mobile)
+                ui.div({"class": "sidebar-overlay", "id": "sidebar-overlay"}),
+                
+                # Sidebar - Responsiva
+                ui.div({"class": "sidebar", "id": "main-sidebar"},
                     ui.div({"class": "sidebar-header"},
                         ui.div({"class": "sidebar-title"},
                             "🚀 Origin Assistant"
                         ),
-                        ui.div({"style": "font-size: 12px; color: #666; margin-top: 4px;"},
+                        ui.div({"class": "sidebar-user"},
                             f"Usuário: {current_user()}"
                         )
                     ),
@@ -889,48 +1329,52 @@ def server(input: Inputs, output: Outputs, session: Session):
                     
                     ui.input_action_button("clear_chat", "➕ Nova Conversa",
                         class_="new-session-btn"
+                    ),
+                    
+                    # Actions no bottom da sidebar
+                    ui.div({"style": "margin-top: auto; padding: 8px; border-top: 1px solid #2a2a2a;"},
+                        ui.input_action_button("show_admin", "👤 Admin",
+                            class_="btn", style="width: 100%; margin-bottom: 8px;"
+                        ) if is_admin() else ui.TagList(),
+                        ui.input_action_button("logout_btn", "🚪 Logout",
+                            class_="btn btn-logout hidden-mobile", style="width: 100%;"
+                        )
                     )
                 ),
                 
                 # Main Content Area
                 ui.div({"class": "main-content"},
-                    # Header Bar
-                    ui.div({"class": "header-bar"},
+                    # Header Bar (hidden on mobile)
+                    ui.div({"class": "header-bar hidden-mobile"},
                         ui.div({"class": "header-title"},
                             "📊 Especialista em OriginPro"
                         ),
                         ui.div({"class": "header-actions"},
-                            ui.input_action_button("logout_btn", "Logout",
+                            ui.input_action_button("show_admin_desktop", "Admin",
                                 class_="btn btn-logout"
-                            ) if not is_admin() else ui.TagList(
-                                ui.input_action_button("show_admin", "Admin",
-                                    class_="btn btn-logout"
-                                ),
-                                ui.input_action_button("logout_btn", "Logout",
-                                    class_="btn btn-logout"
-                                )
+                            ) if is_admin() else ui.TagList(),
+                            ui.input_action_button("logout_btn_desktop", "Logout",
+                                class_="btn btn-logout"
                             )
                         )
                     ),
                     
-                    # Knowledge Base Section
+                    # Knowledge Base Section - Mobile Optimized
                     ui.div({"class": "kb-section"},
-                        ui.row(
-                            ui.column(8,
-                                ui.input_file("docs", "📚 Adicionar documentação do OriginPro (PDFs)", 
+                        ui.div({"class": "kb-row"},
+                            ui.div({"class": "kb-upload"},
+                                ui.input_file("docs", "📚 Documentação OriginPro (PDFs)", 
                                     multiple=True, 
                                     accept=[".pdf"]
                                 )
                             ),
-                            ui.column(4,
-                                ui.div({"class": "kb-info"},
-                                    ui.output_text("kb_status")
-                                )
+                            ui.div({"class": "kb-info"},
+                                ui.output_text("kb_status")
                             )
                         )
                     ),
                     
-                    # Admin Panel (condicional)
+                    # Admin Panel (condicional e mobile-friendly)
                     ui.output_ui("admin_panel"),
                     
                     # Chat Area
@@ -940,27 +1384,29 @@ def server(input: Inputs, output: Outputs, session: Session):
                         )
                     ),
                     
-                    # Composer
+                    # Composer - Fixed at bottom
                     ui.div({"class": "composer"},
                         ui.div({"class": "composer-inner"},
                             ui.div({"class": "input-wrapper"},
                                 ui.div({"class": "input-container"},
                                     ui.input_text_area("prompt", None, 
-                                        placeholder="Pergunte sobre o OriginPro: plotagem, análise de dados, ferramentas estatísticas...",
-                                        rows=3
+                                        placeholder="Pergunte sobre OriginPro: gráficos, análise de dados...",
+                                        rows=2
                                     ),
-                                    ui.div({"style": "display: flex; gap: 10px; margin-top: 10px;"},
+                                    ui.div({"class": "composer-controls"},
                                         ui.input_select("model", None, 
                                             {
                                                 "claude-3-haiku-20240307": "⚡ Haiku (rápido)",
                                                 "claude-3-5-sonnet-20240620": "✨ Sonnet (avançado)"
                                             }, 
-                                            selected="claude-3-haiku-20240307"
+                                            selected="claude-3-haiku-20240307",
+                                            style="flex: 1; min-width: 150px;"
+                                        ),
+                                        ui.input_action_button("send", "Enviar", 
+                                            class_="btn btn-primary",
+                                            style="min-width: 80px;"
                                         )
                                     )
-                                ),
-                                ui.input_action_button("send", "Enviar", 
-                                    class_="btn btn-primary"
                                 )
                             )
                         )
@@ -983,44 +1429,43 @@ def server(input: Inputs, output: Outputs, session: Session):
     @output
     @render.ui
     def admin_panel():
-        """Painel administrativo para admins"""
+        """Painel administrativo mobile-friendly"""
         if not is_admin():
             return ui.TagList()
         
         users = list_users()
         
-        return ui.div({"class": "admin-panel"},
-            ui.h3("👥 Gerenciar Usuários"),
-            ui.hr(),
+        panel_class = "admin-panel"
+        if admin_panel_open():
+            panel_class += " show"
+        
+        return ui.div({"class": panel_class},
+            ui.h3("👥 Gerenciar Usuários", style="margin-bottom: 16px;"),
             
-            # Adicionar usuário
-            ui.row(
-                ui.column(3,
-                    ui.input_text("new_username", "Usuário", placeholder="nome")
-                ),
-                ui.column(3,
-                    ui.input_password("new_password", "Senha", placeholder="senha")
-                ),
-                ui.column(3,
-                    ui.input_text("new_email", "Email", placeholder="email")
-                ),
-                ui.column(3,
-                    ui.input_numeric("new_months", "Meses", value=12, min=1, max=36)
-                )
+            # Adicionar usuário - Mobile optimized
+            ui.div({"class": "admin-form-row"},
+                ui.input_text("new_username", None, placeholder="Usuário"),
+                ui.input_password("new_password", None, placeholder="Senha"),
+                ui.input_text("new_email", None, placeholder="Email (opcional)"),
+                ui.input_numeric("new_months", None, value=12, min=1, max=36, placeholder="Meses")
             ),
-            ui.input_action_button("add_user_btn", "Adicionar Usuário", class_="btn"),
-            ui.output_text("add_user_feedback"),
+            ui.input_action_button("add_user_btn", "Adicionar Usuário", 
+                class_="btn", style="width: 100%; margin-bottom: 16px;"
+            ),
             
-            ui.hr(),
+            ui.hr(style="margin: 16px 0; border-color: #2a2a2a;"),
             
             # Lista de usuários
-            ui.h4("Usuários Cadastrados"),
+            ui.h4("Usuários Cadastrados", style="margin-bottom: 12px; font-size: 16px;"),
             ui.TagList(*[
                 ui.div({"class": "user-card"},
-                    ui.strong(user[0] + (" 👑" if user[6] else "")),
-                    ui.span(f" • {user[1] or 'sem email'}"),
-                    ui.span(f" • Ativo: {'Sim' if user[4] else 'Não'}"),
-                    ui.span(f" • Expira: {user[5][:10] if user[5] else 'N/A'}")
+                    ui.div(style="display: flex; justify-content: space-between; flex-wrap: wrap; gap: 4px;",
+                        ui.strong(user[0] + (" 👑" if user[6] else "")),
+                        ui.span(f"{'✅' if user[4] else '❌'}", style="color: #98c379;" if user[4] else "color: #e06c75;")
+                    ),
+                    ui.div(style="font-size: 11px; color: #666; margin-top: 4px;",
+                        f"📧 {user[1] or 'sem email'} • 📅 Exp: {user[5][:10] if user[5] else 'N/A'}"
+                    )
                 ) for user in users
             ])
         )
@@ -1039,24 +1484,20 @@ def server(input: Inputs, output: Outputs, session: Session):
     @output
     @render.ui
     def chat_thread():
-        """Renderiza thread do chat"""
+        """Renderiza thread do chat com design mobile-friendly"""
         items = []
         
         # Mensagem inicial se chat vazio
         if not history() and not typing():
             items.append(
-                ui.div({"style": "text-align: center; padding: 40px; color: #666;"},
-                    ui.h3("Bem-vindo ao Origin Software Assistant!"),
+                ui.div({"class": "welcome-message"},
+                    ui.h3({"class": "welcome-title"}, "Bem-vindo ao Origin Assistant!"),
                     ui.p("Faça perguntas sobre:"),
-                    ui.div({"style": "margin-top: 20px; text-align: left; max-width: 400px; margin: 20px auto;"},
-                        "• Como criar gráficos no OriginPro",
-                        ui.br(),
-                        "• Análise de dados e estatísticas",
-                        ui.br(),
-                        "• Importação e manipulação de dados",
-                        ui.br(),
-                        "• Ferramentas de fitting e análise",
-                        ui.br(),
+                    ui.div({"class": "welcome-features"},
+                        "• Como criar gráficos no OriginPro", ui.br(),
+                        "• Análise de dados e estatísticas", ui.br(),
+                        "• Importação e manipulação de dados", ui.br(),
+                        "• Ferramentas de fitting e análise", ui.br(),
                         "• Customização de gráficos científicos"
                     )
                 )
@@ -1119,21 +1560,34 @@ def server(input: Inputs, output: Outputs, session: Session):
             is_admin.set(admin)
             print(f"[LOGIN] Usuário {username} autenticado com sucesso")
     
+    # Event Handlers - Logout (múltiplos botões)
     @reactive.Effect
-    @reactive.event(input.logout_btn)
+    @reactive.event(input.logout_btn, input.logout_btn_mobile, input.logout_btn_desktop)
     def handle_logout():
         """Processa logout"""
         authenticated.set(False)
         current_user.set("")
         is_admin.set(False)
         history.set([])
+        sidebar_open.set(False)
+        admin_panel_open.set(False)
         ui.notification_show("Logout realizado", type="message", duration=2)
     
+    # Event Handlers - Mobile Navigation
+    @reactive.Effect
+    @reactive.event(input.toggle_sidebar)
+    def toggle_sidebar():
+        """Toggle da sidebar mobile"""
+        sidebar_open.set(not sidebar_open())
+        # Adicionar/remover classes via JavaScript seria ideal aqui
+        # Por limitação do Shiny, faremos isso via CSS media queries
+    
     # Event Handlers - Admin
-    @output
-    @render.text
-    def add_user_feedback():
-        return ""
+    @reactive.Effect
+    @reactive.event(input.show_admin, input.show_admin_desktop)
+    def toggle_admin():
+        """Toggle do painel admin"""
+        admin_panel_open.set(not admin_panel_open())
     
     @reactive.Effect
     @reactive.event(input.add_user_btn)
@@ -1167,6 +1621,7 @@ def server(input: Inputs, output: Outputs, session: Session):
         """Limpa o chat"""
         history.set([])
         ui.update_text_area("prompt", value="")
+        sidebar_open.set(False)  # Fecha sidebar no mobile
     
     @reactive.Effect
     @reactive.event(input.docs)
@@ -1203,6 +1658,7 @@ def server(input: Inputs, output: Outputs, session: Session):
         
         push("user", q)
         ui.update_text_area("prompt", value="")
+        sidebar_open.set(False)  # Fecha sidebar no mobile
         
         if client is None:
             push("assistant", "⚠️ Configure ANTHROPIC_API_KEY para usar o Claude.")
@@ -1214,7 +1670,7 @@ def server(input: Inputs, output: Outputs, session: Session):
         try:
             reply = chat_reply_with_context(history(), model)
         except Exception as e:
-            reply = f"❌ Erro: {str(e)}"
+            reply = f"⌫ Erro: {str(e)}"
         finally:
             typing.set(False)
         
