@@ -1332,12 +1332,19 @@ def server(input: Inputs, output: Outputs, session: Session):
                     ),
                     
                     # Actions no bottom da sidebar
-                    ui.div({"style": "margin-top: auto; padding: 8px; border-top: 1px solid #2a2a2a;"},
-                        ui.input_action_button("show_admin", "👤 Admin",
-                            class_="btn", style="width: 100%; margin-bottom: 8px;"
+                    ui.div(
+                        {"style": "margin-top: auto; padding: 8px; border-top: 1px solid #2a2a2a;"},
+                        ui.input_action_button(
+                            "show_admin", 
+                            "👤 Admin",
+                            class_="btn", 
+                            style="width: 100%; margin-bottom: 8px;"
                         ) if is_admin() else ui.TagList(),
-                        ui.input_action_button("logout_btn", "🚪 Logout",
-                            class_="btn btn-logout hidden-mobile", style="width: 100%;"
+                        ui.input_action_button(
+                            "logout_btn", 
+                            "🚪 Logout",
+                            class_="btn btn-logout hidden-mobile", 
+                            style="width: 100%;"
                         )
                     )
                 ),
@@ -1349,11 +1356,16 @@ def server(input: Inputs, output: Outputs, session: Session):
                         ui.div({"class": "header-title"},
                             "📊 Especialista em OriginPro"
                         ),
-                        ui.div({"class": "header-actions"},
-                            ui.input_action_button("show_admin_desktop", "Admin",
+                        ui.div(
+                            {"class": "header-actions"},
+                            ui.input_action_button(
+                                "show_admin_desktop", 
+                                "Admin",
                                 class_="btn btn-logout"
                             ) if is_admin() else ui.TagList(),
-                            ui.input_action_button("logout_btn_desktop", "Logout",
+                            ui.input_action_button(
+                                "logout_btn_desktop", 
+                                "Logout",
                                 class_="btn btn-logout"
                             )
                         )
