@@ -1612,10 +1612,11 @@ def server(input: Inputs, output: Outputs, session: Session):
         ui.notification_show(message, type="message" if success else "warning", duration=3)
         
         if success:
-            # Limpar campos
+            # Limpar campos - CORREÇÃO AQUI
             ui.update_text("new_username", value="")
-            ui.update_password("new_password", value="")
+            # REMOVIDO ui.update_password que não existe
             ui.update_text("new_email", value="")
+            ui.update_numeric("new_months", value=12)
     
     # Event Handlers - Chat
     @reactive.Effect
