@@ -1,273 +1,390 @@
+# app.py — Chat UI + Light/Dark + PDF RAG cache (TF-IDF) — fixed for Shiny 1.4 (await send_custom_message)
+from shiny import App, ui, render, reactive
+from dotenv import load_dotenv
+import os, traceback, re, json, hashlib
+from pathlib import Path
 
-# =============================================================================
-# origin_assistant_complete.py — Finalized single-file Streamlit app
-# =============================================================================
-import os, io, re, hmac, json, math, base64, hashlib, secrets, datetime as dt
-from typing import List, Dict, Tuple, Optional
-from dataclasses import dataclass, field
-from collections import Counter, defaultdict
-import streamlit as st
+# -------- Env / Anthropic --------
+load_dotenv()
+API_KEY = os.getenv("ANTHROPIC_API_KEY")
+HAS_KEY = bool(API_KEY)
 
 try:
-    import anthropic  # type: ignore
-    _ANTHROPIC_AVAILABLE = True
+    from anthropic import Anthropic
 except Exception:
-    _ANTHROPIC_AVAILABLE = False
+    Anthropic = None
 
-st.set_page_config(page_title="Origin Assistant · RAG + Claude", page_icon="🧪", layout="wide", initial_sidebar_state="expanded")
-
-def now_iso() -> str: return dt.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-
-def read_secret(path: List[str], default: Optional[str] = None) -> Optional[str]:
+client = None
+if HAS_KEY and Anthropic is not None:
     try:
-        node = st.secrets
-        for k in path: node = node[k]
-        return str(node)
+        client = Anthropic(api_key=API_KEY)
     except Exception:
-        return default
+        client = None
 
-PBKDF2_ALGO="pbkdf2_sha256"; PBKDF2_ITERATIONS=210_000; SALT_BYTES=16; KEY_LEN=32
-_b64 = lambda b: base64.b64encode(b).decode("utf-8")
-_b64d = lambda s: base64.b64decode(s.encode("utf-8"))
-def hash_password(p:str,*,iterations:int=PBKDF2_ITERATIONS)->str:
-    salt=secrets.token_bytes(SALT_BYTES)
-    dk=hashlib.pbkdf2_hmac("sha256", p.encode(), salt, iterations, dklen=KEY_LEN)
-    return f"{PBKDF2_ALGO}${iterations}${_b64(salt)}${_b64(dk)}"
-def verify_password(p:str, stored:str)->bool:
-    try:
-        algo,iters_s,salt_b64,hash_b64=stored.split("$")
-        if algo!=PBKDF2_ALGO: return False
-        iters=int(iters_s); salt=_b64d(salt_b64); expected=_b64d(hash_b64)
-        test=hashlib.pbkdf2_hmac("sha256", p.encode(), salt, iters, dklen=len(expected))
-        return hmac.compare_digest(expected, test)
-    except Exception: return False
+# -------- Optional deps for RAG (graceful fallback) --------
+HAVE_RAG_DEPS = True
+try:
+    from pypdf import PdfReader
+    from sklearn.feature_extraction.text import TfidfVectorizer
+    from sklearn.metrics.pairwise import cosine_similarity
+    from joblib import dump, load
+except Exception:
+    HAVE_RAG_DEPS = False
+    PdfReader = None
+    TfidfVectorizer = None
+    cosine_similarity = None
+    dump = load = None
 
-def load_users_from_secrets()->Dict[str,str]:
-    users={}
-    try:
-        raw=st.secrets.get("auth",{}).get("users",[])
-        for u in raw or []:
-            if isinstance(u,dict) and "username" in u and "password_hash" in u:
-                users[str(u["username"]).strip().lower()]=str(u["password_hash"])
-    except Exception: pass
-    return users
-def save_user_in_session(u:str): st.session_state["user"]={"username":u,"login_at":now_iso()}
-def current_user()->Optional[str]: return st.session_state.get("user",{}).get("username")
-def logout(): st.session_state.pop("user",None); st.session_state.pop("chat",None)
-def try_register(u:str,p:str,tok:str)->Tuple[bool,str]:
-    exp=read_secret(["auth","admin_token"],"")
-    if not exp or tok!=exp: return False,"Admin token inválido."
-    if not u or not p: return False,"Usuário e senha são obrigatórios."
-    u=u.strip().lower()
-    if u in st.session_state.get("user_db",{}): return False,"Usuário já existe."
-    st.session_state["user_db"][u]=hash_password(p); return True,f"Usuário '{u}' registrado (sessão)."
-def ensure_user_db():
-    if "user_db" not in st.session_state:
-        st.session_state["user_db"]={}; st.session_state["user_db"].update(load_users_from_secrets())
-def login_form():
-    ensure_user_db(); st.markdown("### Entrar")
-    with st.form("login_form"):
-        u=st.text_input("Usuário"); p=st.text_input("Senha",type="password"); ok=st.form_submit_button("Entrar")
-    if ok:
-        if u and p and u.strip().lower() in st.session_state["user_db"] and verify_password(p, st.session_state["user_db"][u.strip().lower()]):
-            save_user_in_session(u.strip().lower()); st.success("Login concluído."); st.rerun()
-        else: st.error("Credenciais inválidas ou usuário não encontrado.")
-def register_form():
-    st.markdown("### Registrar (admin)")
-    with st.form("register_form"):
-        u=st.text_input("Novo usuário"); p=st.text_input("Nova senha",type="password"); t=st.text_input("Admin token"); ok=st.form_submit_button("Registrar")
-    if ok:
-        s,msg=try_register(u,p,t); (st.success if s else st.error)(msg)
+print("RAG deps disponíveis?", HAVE_RAG_DEPS)
 
-@dataclass
-class ClaudeClient:
-    api_key: Optional[str]=field(default=None)
-    model: str=field(default="claude-3-5-sonnet-latest")
-    max_tokens: int=field(default=1024)
-    def available(self)->bool: return bool(self.api_key) and _ANTHROPIC_AVAILABLE
-    def complete(self, prompt:str)->str:
-        if not self.available(): return "(Simulação Claude) "+prompt[:300]
+# -------- RAG cache paths --------
+DATA_DIR = Path("data")
+CACHE_DIR = DATA_DIR / "cache"
+CHUNKS_JSON = CACHE_DIR / "chunks.json"
+VECTORIZER_JOBLIB = CACHE_DIR / "tfidf_vectorizer.joblib"
+MATRIX_JOBLIB = CACHE_DIR / "tfidf_matrix.joblib"
+
+for d in (DATA_DIR, CACHE_DIR):
+    d.mkdir(parents=True, exist_ok=True)
+
+# -------- RAG helpers --------
+def sha256_file(path: Path) -> str:
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        for b in iter(lambda: f.read(1024*1024), b""):
+            h.update(b)
+    return h.hexdigest()
+
+def extract_text(pdf_path: Path) -> str:
+    reader = PdfReader(str(pdf_path))
+    text = []
+    for page in reader.pages:
+        text.append(page.extract_text() or "")
+    return "\n".join(text)
+
+def chunk_text(text: str, max_chars=900, overlap=220):
+    text = re.sub(r"\s+", " ", text).strip()
+    chunks = []
+    i = 0
+    while i < len(text):
+        j = min(i + max_chars, len(text))
+        chunks.append(text[i:j])
+        i = j - overlap if j - overlap > i else j
+    return [c for c in chunks if c.strip()]
+
+def load_index():
+    if CHUNKS_JSON.exists() and VECTORIZER_JOBLIB.exists() and MATRIX_JOBLIB.exists():
+        chunks = json.loads(CHUNKS_JSON.read_text(encoding="utf-8"))
+        vectorizer = load(VECTORIZER_JOBLIB)
+        matrix = load(MATRIX_JOBLIB)
+        return chunks, vectorizer, matrix
+    return [], None, None
+
+def save_index(chunks, vectorizer, matrix):
+    CHUNKS_JSON.write_text(json.dumps(chunks, ensure_ascii=False), encoding="utf-8")
+    dump(vectorizer, VECTORIZER_JOBLIB)
+    dump(matrix, MATRIX_JOBLIB)
+
+def add_pdfs_to_index(file_paths: list[Path]):
+    if not HAVE_RAG_DEPS:
+        return 0
+    chunks, _, _ = load_index()
+    new_chunks = []
+    for p in file_paths:
         try:
-            client=anthropic.Anthropic(api_key=self.api_key)
-            msg=client.messages.create(model=self.model,max_tokens=self.max_tokens,messages=[{"role":"user","content":prompt}])
-            parts=[]
-            content=getattr(msg,"content",[])
-            for blk in content:
-                if isinstance(blk,dict) and blk.get("type")=="text": parts.append(blk.get("text",""))
-                elif getattr(blk,"type","")== "text": parts.append(getattr(blk,"text",""))
-            return "\n".join([p for p in parts if p]) or "(Claude sem conteúdo)"
-        except Exception as e: return f"(Erro Claude) {e}"
+            doc_id = sha256_file(p)
+            text = extract_text(p)
+            for idx, ch in enumerate(chunk_text(text)):
+                new_chunks.append({
+                    "doc_id": doc_id,
+                    "source": p.name,
+                    "chunk_id": f"{doc_id[:8]}-{idx}",
+                    "text": ch
+                })
+        except Exception as e:
+            print(f"[RAG] erro ao processar {p.name}: {e}")
+    if not new_chunks:
+        return len(chunks)
+    all_chunks = chunks + new_chunks
+    corpus = [c["text"] for c in all_chunks]
+    vectorizer = TfidfVectorizer(ngram_range=(1,2), max_features=120_000)
+    matrix = vectorizer.fit_transform(corpus)
+    save_index(all_chunks, vectorizer, matrix)
+    return len(all_chunks)
 
-TOKEN_PATTERN=re.compile(r"[A-Za-zÀ-ÖØ-öø-ÿ0-9_]+", re.UNICODE)
-@dataclass
-class Chunk: doc_id:str; chunk_id:int; text:str
-@dataclass
-class TfIdfIndex:
-    chunks:List[Chunk]=field(default_factory=list)
-    df:Dict[str,int]=field(default_factory=lambda: defaultdict(int))
-    idf:Dict[str,float]=field(default_factory=dict)
-    norms:List[float]=field(default_factory=list)
-    vocab:Dict[str,int]=field(default_factory=dict)
-    weights:List[Dict[int,float]]=field(default_factory=list)
-    def clear(self): self.chunks.clear(); self.df.clear(); self.idf.clear(); self.norms.clear(); self.vocab.clear(); self.weights.clear()
-    @staticmethod
-    def tokenize(txt:str)->List[str]: return [t.lower() for t in TOKEN_PATTERN.findall(txt)]
-    def add_documents(self, docs:Dict[str,str], *, chunk_size:int=900, overlap:int=120):
-        self.clear()
-        def split_chunks(t:str)->List[str]:
-            toks=self.tokenize(t); out=[]; i=0
-            while i<len(toks):
-                j=min(i+chunk_size,len(toks)); out.append(" ".join(toks[i:j]))
-                if j==len(toks): break
-                i=max(0,j-overlap)
-            return out
-        for doc_id,text in docs.items():
-            for i,part in enumerate(split_chunks(text)): self.chunks.append(Chunk(doc_id, i, part))
-        for ch in self.chunks:
-            seen=set()
-            for tok in self.tokenize(ch.text):
-                if tok not in self.vocab: self.vocab[tok]=len(self.vocab)
-                if tok not in seen: self.df[tok]+=1; seen.add(tok)
-        N=max(1,len(self.chunks))
-        for tok,df in self.df.items(): self.idf[tok]=math.log((1+N)/(1+df))+1.0
-        self.weights=[]; self.norms=[]
-        for ch in self.chunks:
-            counts=Counter(self.tokenize(ch.text)); vec={}
-            for tok,c in counts.items():
-                idx=self.vocab.get(tok); 
-                if idx is None: continue
-                tf=1+math.log(c); idf=self.idf.get(tok,0.0); vec[idx]=tf*idf
-            norm=math.sqrt(sum(v*v for v in vec.values())) or 1.0
-            self.weights.append(vec); self.norms.append(norm)
-    def search(self, query:str, k:int=5)->List[Tuple[float,Chunk]]:
-        if not query.strip() or not self.chunks: return []
-        q_counts=Counter(self.tokenize(query)); q_vec={}
-        for tok,c in q_counts.items():
-            idx=self.vocab.get(tok); 
-            if idx is None: continue
-            tf=1+math.log(c); idf=self.idf.get(tok,0.0); q_vec[idx]=tf*idf
-        q_norm=math.sqrt(sum(v*v for v in q_vec.values())) or 1.0
-        scores=[]
-        for i,vec in enumerate(self.weights):
-            dot=sum(val*vec.get(idx,0.0) for idx,val in q_vec.items())
-            sim=dot/(q_norm*self.norms[i])
-            scores.append((sim,i))
-        scores.sort(reverse=True,key=lambda x:x[0])
-        return [(s,self.chunks[i]) for s,i in scores[:k]]
+def retrieve(query: str, k=4):
+    chunks, vectorizer, matrix = load_index()
+    if not chunks or vectorizer is None:
+        return []
+    q_vec = vectorizer.transform([query])
+    sims = cosine_similarity(q_vec, matrix)[0]
+    top_idx = sims.argsort()[::-1][:k]
+    results = []
+    for i in top_idx:
+        c = chunks[i]
+        results.append({
+            "score": float(sims[i]),
+            "text": c["text"],
+            "source": c["source"],
+            "chunk_id": c["chunk_id"]
+        })
+    return results
 
-def ensure_index():
-    if "rag_index" not in st.session_state: st.session_state["rag_index"]=TfIdfIndex()
-    if "rag_docs" not in st.session_state: st.session_state["rag_docs"]={}
-def add_uploaded_docs(files):
-    ensure_index(); docs=st.session_state["rag_docs"]
-    for f in files or []:
-        name=getattr(f,"name",f"doc_{len(docs)+1}.txt")
-        try:
-            raw=f.read()
-            try: text=raw.decode("utf-8",errors="ignore")
-            except Exception: text=raw.decode("latin-1",errors="ignore")
-            docs[name]=text
-        except Exception as e: st.warning(f"Falha ao ler '{name}': {e}")
-    st.session_state["rag_index"].add_documents(docs)
-def rebuild_index_if_needed(force=False):
-    ensure_index()
-    if force or (st.session_state.get("rag_dirty") and st.session_state["rag_docs"]):
-        st.session_state["rag_index"].add_documents(st.session_state["rag_docs"]); st.session_state["rag_dirty"]=False
+def build_context(query: str):
+    hits = retrieve(query, k=4)
+    ctx = "\n\n".join(
+        [f"[{i+1}] ({h['source']} • {h['chunk_id']} • score={h['score']:.3f})\n{h['text']}" for i, h in enumerate(hits)]
+    )
+    cites = "\n".join([f"- {h['source']} ({h['chunk_id']})" for h in hits])
+    return ctx, cites
 
+# -------- Chat helpers --------
+def anthropic_messages_from_history(history):
+    msgs = []
+    for m in history:
+        role = m["role"]
+        if role not in ("user","assistant"):
+            continue
+        msgs.append({"role": role, "content":[{"type":"text","text": m["content"]}]})
+    return msgs
+
+def chat_reply_with_context(history, model):
+    if client is None:
+        return "Configuração necessária: defina ANTHROPIC_API_KEY e instale 'anthropic'."
+    # última pergunta do usuário
+    question = next((m["content"] for m in reversed(history) if m["role"]=="user"), "")
+    ctx, cites = build_context(question) if HAVE_RAG_DEPS else ("", "")
+
+    system = (
+        "Você é o Origin Software Assistant. Use o CONTEXTO quando ele estiver presente; "
+        "se a resposta não estiver no contexto, diga claramente que o documento não contém a informação.\n\n"
+        f"=== CONTEXTO ===\n{ctx}\n=== FIM DO CONTEXTO ==="
+    )
+    resp = client.messages.create(
+        model=model, max_tokens=900, temperature=0.2,
+        system=system, messages=anthropic_messages_from_history(history)
+    )
+    parts = []
+    try:
+        for block in getattr(resp, "content", []):
+            if getattr(block, "type", None) == "text":
+                parts.append(block.text)
+    except Exception:
+        parts = [str(resp)]
+    answer = "\n".join(parts) if parts else str(resp)
+    if cites:
+        answer += "\n\n---\n**Fontes:**\n" + cites
+    return answer
+
+# ----------------- CSS (Light/Dark via data-theme) -----------------
 CSS = """
-:root { --bg:#0b1324; --panel:#0f1a33; --muted:#95a1c1; --primary:#67a7ff; --accent:#22d3ee; --radius:16px; }
-.stApp { background: radial-gradient(1200px 800px at 10% -10%, #0e1b38 0%, var(--bg) 55%); color:#e6edf7; }
-.block-container{ padding-top:1.2rem; padding-bottom:2rem; max-width:1250px; }
-.chat-user,.chat-bot{ border-radius:16px; padding:.7rem .9rem; margin-bottom:.5rem; white-space:pre-wrap }
-.chat-user{ background:rgba(34,211,238,.10); border:1px solid rgba(34,211,238,.25) }
-.chat-bot{ background:rgba(59,130,246,.10); border:1px solid rgba(59,130,246,.25) }
-.badge{ display:inline-flex; gap:6px; font-size:.78rem; color:#cfe3ff; background:rgba(103,167,255,.12); border:1px solid rgba(103,167,255,.25); border-radius:999px; padding:.25rem .55rem }
-@media (min-width: 1000px){ .grid-2{ display:grid; grid-template-columns:1.15fr .85fr; gap:1rem } }
-@media (max-width: 999px){ .grid-2{ display:block } }
-.footer{ color:var(--muted); text-align:center; margin-top:1rem; font-size:.8rem; opacity:.85 }
+:root{
+  --bg:#f8fafc; --panel:#ffffff; --bubble-user:#f3f4f6; --bubble-assistant:#eef2ff;
+  --border:#e5e7eb; --text:#0f172a; --muted:#475569; --accent:#7c3aed;
+}
+[data-theme='dark']{
+  --bg:#0b1220; --panel:#0f172a; --bubble-user:#111827; --bubble-assistant:#0b1320;
+  --border:#1f2937; --text:#e5e7eb; --muted:#9ca3af; --accent:#8b5cf6;
+}
+html,body{height:100%}
+body{background:linear-gradient(180deg,var(--bg),var(--panel) 55%,var(--bg));color:var(--text);}
+a{color:var(--accent)}
+.header{max-width:980px;margin:18px auto 0;padding:8px 16px;display:flex;align-items:center;gap:8px;justify-content:space-between}
+.header .left h3{font-weight:700;margin:0}
+.header .sub{color:var(--muted);margin:2px 0 0 0}
+.header .right{display:flex;gap:8px;align-items:center}
+.badge{font-size:.9rem;color:var(--muted)}
+.kb{max-width:980px;margin:10px auto;padding:0 16px}
+.chat-container{max-width:980px;margin:0 auto;padding:8px 16px 120px}
+.message{display:flex;gap:12px;padding:14px 16px;border-radius:16px;margin:10px 0;border:1px solid var(--border);background:var(--bubble-assistant)}
+.message.user{background:var(--bubble-user)}
+.avatar{width:32px;height:32px;border-radius:8px;background:var(--accent);display:flex;align-items:center;justify-content:center;font-weight:700;color:white;flex-shrink:0}
+.role{font-weight:600;margin-bottom:4px;color:var(--muted)}
+.content{white-space:pre-wrap;line-height:1.5}
+.panel-bottom{backdrop-filter:blur(10px); background:color-mix(in oklab, var(--bg) 70%, var(--panel)); border-top:1px solid var(--border); padding:12px}
+.composer{max-width:980px;margin:0 auto;display:flex;gap:10px;align-items:flex-end}
+.composer .left{flex:1}
+textarea.form-control{background:var(--panel);color:var(--text);border:1px solid var(--border);}
+select.form-select{background:var(--panel);color:var(--text);border:1px solid var(--border);}
+.btn-primary{background:var(--accent);border-color:var(--accent)}
+.badge-ok{color:#10b981}.badge-warn{color:#f59e0b}.badge-err{color:#ef4444}
 """
-st.markdown(f"<style>{CSS}</style>", unsafe_allow_html=True)
-st.markdown("""<script>const t=parent.document.querySelector('.block-container'); if(t){t.scrollTop=t.scrollHeight}</script>""", unsafe_allow_html=True)
 
-def header():
-    c1,c2=st.columns([.8,.2])
-    with c1:
-        st.markdown("## 🧪 Origin Assistant — RAG + Claude")
-        st.caption("Auth PBKDF2 • RAG TF‑IDF • Claude opcional")
-    with c2:
-        if current_user():
-            st.markdown(f"<div class='badge'>🔐 {current_user()}</div>", unsafe_allow_html=True)
-            if st.button("Sair"): logout(); st.rerun()
+# ------------------ UI ------------------
+app_ui = ui.page_fluid(
+    ui.tags.style(CSS),
+    # Theme bootstrap + handler
+    ui.tags.script("""
+      Shiny.addCustomMessageHandler('set_theme', (theme) => {
+        document.documentElement.setAttribute('data-theme', theme);
+        try { localStorage.setItem('osa-theme', theme); } catch(e){}
+      });
+      (function(){
+        let saved = 'dark';
+        try {
+          saved = localStorage.getItem('osa-theme') ||
+                  (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+        } catch(e) {}
+        document.documentElement.setAttribute('data-theme', saved);
+        Shiny.setInputValue('theme', saved, {priority:'event'});
+      })();
+    """),
+    ui.div(
+        {"class":"header"},
+        ui.div({"class":"left"},
+               ui.h3("🚀 Origin Software Assistant"),
+               ui.p({"class":"sub"}, "Chat + RAG de PDFs (cache local) • Claude via ANTHROPIC_API_KEY")),
+        ui.div({"class":"right"},
+               ui.input_select("theme", None,
+                               {"dark":"🌙 Escuro","light":"☀️ Claro"},
+                               selected="dark"),
+               ui.tags.span({"class":"badge"}, ui.output_text("status", inline=True)),
+        ),
+    ),
+    ui.div({"class":"kb"},
+        ui.card(
+            ui.card_header("📚 Base de conhecimento (PDF → índice TF-IDF)"),
+            ui.input_file("docs", "Adicionar PDF(s)", multiple=True, accept=[".pdf"]),
+            ui.output_text("kb_status")
+        )
+    ),
+    ui.div({"class":"chat-container"}, ui.output_ui("chat_thread")),
+    ui.panel_fixed(
+        ui.div({"class":"panel-bottom", "style":"padding:0"},
+            ui.div({"class":"composer"},
+                ui.div({"class":"left"},
+                    ui.input_text_area("prompt", None, rows=3,
+                                       placeholder="Envie uma mensagem… (Shift+Enter = quebra de linha)"),
+                    ui.row(
+                        ui.column(8,
+                            ui.input_select("model", None, {
+                                "claude-3-haiku-20240307":"Claude 3 Haiku (econômico)",
+                                "claude-3-5-sonnet-20240620":"Claude 3.5 Sonnet (qualidade)"
+                            }, selected="claude-3-haiku-20240307")
+                        ),
+                        ui.column(4, ui.input_action_button("clear","Limpar"))
+                    ),
+                ),
+                ui.input_action_button("send","Enviar", class_="btn btn-primary"),
+            )
+        ),
+        left="0", right="0", bottom="0"
+    )
+)
 
-def handle_upload_and_index():
-    st.subheader("📚 Base de Conhecimento (RAG)")
-    up=st.file_uploader("Envie .txt/.md/.csv/.tsv", type=["txt","md","csv","tsv"], accept_multiple_files=True)
-    if up: add_uploaded_docs(up); st.success(f"{len(up)} arquivo(s) adicionados.")
-    if st.button("Reindexar documentos"): rebuild_index_if_needed(True); st.info("Reindexação concluída.")
-    ensure_index()
-    if st.session_state["rag_docs"]:
-        with st.expander("Ver documentos carregados"):
-            for k,v in st.session_state["rag_docs"].items(): st.markdown(f"- `{k}` — {len(v)} caracteres")
-    else: st.caption("Nenhum documento na base ainda.")
+# ------------- Server -------------
+def server(input, output, session):
+    history = reactive.Value([])
+    typing = reactive.Value(False)
 
-def format_context(res,top_k=4)->str:
-    return "\n\n".join([f"[{ch.doc_id}#{ch.chunk_id} | score={s:.3f}]\n{ch.text}" for s,ch in res[:top_k]])
+    def push(role, content):
+        history.set(history() + [{"role": role, "content": content}])
 
-def chat_section(claude):
-    st.subheader("💬 Chat")
-    prompt=st.text_area("Sua pergunta ou mensagem", height=120)
-    cA,cB,cC=st.columns([.2,.2,.6])
-    with cA: top_k=st.number_input("Top-K RAG",1,10,4)
-    with cB: use_claude=st.toggle("Usar Claude", value=bool(claude.available()))
-    with cC: temperature=st.slider("Temperatura (Claude)",0.0,1.0,0.3,0.1)
-    if "chat" not in st.session_state: st.session_state["chat"]=[]
-    if st.button("Enviar", type="primary") and prompt.strip():
-        st.session_state["chat"].append({"role":"user","content":prompt})
-        ensure_index(); results=st.session_state["rag_index"].search(prompt, k=top_k)
-        context=format_context(results, top_k=top_k) if results else ""
-        sys_hint=("Você é um assistente especializado em materiais, polímeros e ciência. "
-                  "Responda de forma direta e cite trechos do contexto com [doc#chunk] quando útil.")
-        composed=f"{sys_hint}\n\n## Contexto selecionado\n{context}\n\n## Pergunta\n{prompt}"
-        reply=claude.complete(composed) if use_claude else "(Modo local) "+composed[:1200]
-        st.session_state["chat"].append({"role":"assistant","content":reply})
-    if st.session_state["chat"]:
-        for m in st.session_state["chat"][-50:]:
-            cls="chat-user" if m["role"]=="user" else "chat-bot"
-            st.markdown(f"<div class='{cls}'>{m['content']}</div>", unsafe_allow_html=True)
-    c1,c2,c3=st.columns(3)
-    with c1:
-        if st.button("Limpar chat"): st.session_state["chat"]=[]; st.rerun()
-    with c2:
-        if st.button("Copiar última"):
-            last=next((m for m in reversed(st.session_state["chat"]) if m["role"]=="assistant"), None)
-            st.code(last["content"] if last else "—")
-    with c3:
-        if st.button("Exportar .json"):
-            data=json.dumps(st.session_state["chat"], ensure_ascii=False, indent=2)
-            st.download_button("Baixar chat.json", data, file_name="chat_export.json")
+    @render.text
+    def status():
+        if HAS_KEY and client is not None:
+            return "✅ Chave detectada"
+        elif HAS_KEY and client is None and Anthropic is None:
+            return "⚠️ Falta instalar 'anthropic'"
+        else:
+            return "❌ Sem chave"
 
-def auth_section():
-    if not current_user():
-        st.info("Entre ou registre um usuário (admin token exigido nos *Secrets*).")
-        c1,c2=st.columns(2)
-        with c1: login_form()
-        with c2: register_form()
-        st.stop()
+    @render.text
+    def kb_status():
+        if not HAVE_RAG_DEPS:
+            return "RAG indisponível: instale pypdf, scikit-learn e joblib."
+        chunks, _, _ = load_index()
+        n_docs = len({c["source"] for c in chunks}) if chunks else 0
+        n_chunks = len(chunks)
+        return f"📄 {n_docs} PDF(s) • 🧩 {n_chunks} chunk(s)"
 
-def server():
-    if "user_db" not in st.session_state: ensure_user_db()
-    if "rag_docs" not in st.session_state: ensure_index()
-    api_key=read_secret(["anthropic","api_key"], os.getenv("ANTHROPIC_API_KEY"))
-    model=read_secret(["anthropic","model"], "claude-3-5-sonnet-latest") or "claude-3-5-sonnet-latest"
-    claude=ClaudeClient(api_key=api_key, model=model, max_tokens=1024)
-    header(); auth_section()
-    st.markdown("<div class='grid-2'>", unsafe_allow_html=True)
-    with st.container(): handle_upload_and_index(); st.markdown("---"); chat_section(claude)
-    st.markdown("</div>", unsafe_allow_html=True)
-    st.markdown(f"<div class='footer'>Origin Assistant · {now_iso()}</div>", unsafe_allow_html=True)
+    @render.ui
+    def chat_thread():
+        items = []
+        for m in history():
+            cls = "assistant" if m["role"] == "assistant" else "user"
+            avatar = "OA" if m["role"] == "assistant" else "Você"
+            items.append(
+                ui.div(
+                    {"class": f"message {cls}"},
+                    ui.div({"class":"avatar"}, avatar[0]),
+                    ui.div(
+                        ui.div({"class":"role"}, "Origin Assistant" if m["role"]=="assistant" else "Você"),
+                        ui.div({"class":"content"}, ui.markdown(m["content"])),
+                    )
+                )
+            )
+        if typing():
+            items.append(
+                ui.div({"class":"message assistant"},
+                       ui.div({"class":"avatar"}, "OA"),
+                       ui.div(ui.div({"class":"role"},"Origin Assistant"),
+                              ui.div({"class":"content"},"Digitando… ⏳")))
+            )
+        return ui.TagList(*items)
 
-if __name__=="__main__":
-    server()
+    @reactive.Effect
+    @reactive.event(input.clear)
+    def _clear():
+        history.set([])
+        ui.update_text_area("prompt", value="")
+
+    # Apply theme when selection changes (Shiny 1.4: await coroutine)
+    @reactive.Effect
+    async def _theme_apply():
+        theme = input.theme() or "dark"
+        await session.send_custom_message("set_theme", theme)
+
+    # Key handler + autoscroll
+    ui.tags.script("""
+        document.addEventListener('keydown', (e)=>{
+          if(e.target.id==='prompt' && e.key==='Enter' && !e.shiftKey){
+            e.preventDefault();
+            document.getElementById('send').click();
+          }
+        });
+        new MutationObserver(()=>{
+          const el=document.querySelector('.chat-container');
+          if(el) el.scrollTop = el.scrollHeight;
+        }).observe(document.body,{childList:true,subtree:true});
+    """)
+
+    @reactive.Effect
+    @reactive.event(input.docs)
+    def _ingest_pdfs():
+        if not HAVE_RAG_DEPS:
+            ui.notification_show("Instale pypdf, scikit-learn e joblib para ativar o RAG.", type="error")
+            return
+        files = input.docs() or []
+        if not files: return
+        paths = []
+        for f in files:
+            src = Path(f["datapath"])
+            dst = DATA_DIR / f["name"]
+            dst.write_bytes(src.read_bytes())
+            paths.append(dst)
+        total = add_pdfs_to_index(paths)
+        ui.notification_show(f"PDF(s) adicionados. Total de chunks: {total}", type="message")
+
+    @reactive.Effect
+    @reactive.event(input.send)
+    def _send():
+        q = (input.prompt() or "").strip()
+        if not q:
+            ui.notification_show("Digite sua mensagem.", type="warning")
+            return
+        push("user", q)
+        ui.update_text_area("prompt", value="")
+        if client is None:
+            push("assistant", "Claude indisponível. Verifique ANTHROPIC_API_KEY e o pacote 'anthropic'.")
+            return
+        typing.set(True)
+        model = (input.model() or "claude-3-haiku-20240307")
+        reply = chat_reply_with_context(history(), model)
+        typing.set(False)
+        push("assistant", reply)
+
+app = App(app_ui, server)
 
 
 
