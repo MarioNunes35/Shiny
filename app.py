@@ -151,19 +151,32 @@ def anthropic_messages_from_history(history):
 def chat_reply_with_context(history, model):
     if client is None:
         return "Configuração necessária: defina ANTHROPIC_API_KEY e instale 'anthropic'."
+    
     # Última pergunta do usuário
     question = next((m["content"] for m in reversed(history) if m["role"]=="user"), "")
     ctx, cites = build_context(question) if HAVE_RAG_DEPS else ("", "")
-
-    system = (
-        "Você é o Origin Software Assistant. Use o CONTEXTO quando ele estiver presente; "
-        "se a resposta não estiver no contexto, diga claramente que o documento não contém a informação.\n\n"
-        f"=== CONTEXTO ===\n{ctx}\n=== FIM DO CONTEXTO ==="
-    )
+    
+    # Se há contexto dos PDFs, usa o sistema RAG
+    if ctx.strip():
+        system = (
+            "Você é o Origin Software Assistant. Use o CONTEXTO dos documentos para responder. "
+            "Se a informação estiver disponível no contexto, responda baseado nele. "
+            "Se não estiver no contexto, informe que a informação não foi encontrada nos documentos "
+            "e ofereça uma resposta baseada no seu conhecimento geral.\n\n"
+            f"=== CONTEXTO DOS DOCUMENTOS ===\n{ctx}\n=== FIM DO CONTEXTO ==="
+        )
+    else:
+        # Se não há contexto dos PDFs, responde normalmente com conhecimento do Claude
+        system = (
+            "Você é o Origin Software Assistant. Responda de forma útil e precisa usando "
+            "seu conhecimento. Seja claro, direto e forneça informações práticas."
+        )
+    
     resp = client.messages.create(
-        model=model, max_tokens=900, temperature=0.2,
+        model=model, max_tokens=1200, temperature=0.3,
         system=system, messages=anthropic_messages_from_history(history)
     )
+    
     parts = []
     try:
         for block in getattr(resp, "content", []):
@@ -171,9 +184,13 @@ def chat_reply_with_context(history, model):
                 parts.append(block.text)
     except Exception:
         parts = [str(resp)]
+    
     answer = "\n".join(parts) if parts else str(resp)
-    if cites:
-        answer += "\n\n---\n**Fontes:**\n" + cites
+    
+    # Adiciona fontes apenas se usou documentos
+    if cites and ctx.strip():
+        answer += "\n\n---\n**📚 Fontes dos documentos:**\n" + cites
+    
     return answer
 
 # ----------------- CSS Minimalista - Cores do Claude -----------------
@@ -322,7 +339,7 @@ html, body {
   display: inline-block;
 }
 
-.file-input {
+.file-input-wrapper input[type="file"] {
   position: absolute;
   opacity: 0;
   width: 100%;
@@ -479,31 +496,33 @@ html, body {
   position: relative;
 }
 
-.message-input {
+#prompt {
   width: 100%;
-  min-height: 44px;
-  max-height: 120px;
-  padding: 12px 16px;
+  min-height: 80px;
+  max-height: 200px;
+  padding: 16px 20px;
   border: 1px solid var(--border);
   border-radius: 12px;
-  background: var(--bg);
+  background: var(--surface);
   color: var(--text-primary);
   font-family: inherit;
-  font-size: 14px;
+  font-size: 15px;
+  line-height: 1.5;
   resize: none;
   outline: none;
-  transition: border-color 0.2s;
+  transition: all 0.2s;
 }
 
-.message-input:focus {
+#prompt:focus {
   border-color: var(--orange);
+  box-shadow: 0 0 0 3px rgba(255, 120, 73, 0.1);
 }
 
-.message-input::placeholder {
+#prompt::placeholder {
   color: var(--text-muted);
 }
 
-.send-button {
+#send {
   background: var(--orange);
   color: white;
   border: none;
@@ -515,11 +534,11 @@ html, body {
   min-width: 80px;
 }
 
-.send-button:hover:not(:disabled) {
+#send:hover:not(:disabled) {
   background: var(--orange-hover);
 }
 
-.send-button:disabled {
+#send:disabled {
   opacity: 0.5;
   cursor: not-allowed;
 }
@@ -530,45 +549,53 @@ html, body {
   align-items: center;
 }
 
-.model-select {
+#model {
   flex: 1;
+  padding: 10px 14px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--text-primary);
+  font-size: 14px;
+  outline: none;
+  transition: all 0.2s;
+}
+
+#model:focus {
+  border-color: var(--orange);
+  box-shadow: 0 0 0 2px rgba(255, 120, 73, 0.1);
+}
+
+#theme {
   padding: 8px 12px;
   border: 1px solid var(--border);
   border-radius: 8px;
-  background: var(--bg);
+  background: var(--surface);
   color: var(--text-primary);
-  font-size: 13px;
+  font-size: 14px;
   outline: none;
+  transition: all 0.2s;
 }
 
-.model-select:focus {
+#theme:focus {
   border-color: var(--orange);
 }
 
-.theme-select {
-  padding: 6px 10px;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  background: var(--bg);
-  color: var(--text-primary);
-  font-size: 13px;
-  outline: none;
-}
-
-.clear-button {
-  background: transparent;
+#clear {
+  background: var(--surface);
   color: var(--text-secondary);
   border: 1px solid var(--border);
   border-radius: 8px;
-  padding: 8px 16px;
-  font-size: 13px;
+  padding: 10px 18px;
+  font-size: 14px;
   cursor: pointer;
   transition: all 0.2s;
 }
 
-.clear-button:hover {
+#clear:hover {
   background: var(--gray-50);
   color: var(--text-primary);
+  border-color: var(--text-muted);
 }
 
 /* Hide default Shiny styling */
@@ -678,7 +705,7 @@ app_ui = ui.page_fluid(
                     "claude-3-haiku-20240307": "Claude 3 Haiku",
                     "claude-3-5-sonnet-20240620": "Claude 3.5 Sonnet"
                 }, selected="claude-3-haiku-20240307"),
-                ui.input_action_button("clear", "Limpar", class_="clear-button")
+                ui.input_action_button("clear", "Limpar")
             )
         )
     )
@@ -778,20 +805,20 @@ def server(input, output, session):
         
         // Enter to send (Shift+Enter for new line)
         document.addEventListener('keydown', (e) => {
-          if (e.target.classList.contains('message-input') && e.key === 'Enter' && !e.shiftKey) {
+          if (e.target.id === 'prompt' && e.key === 'Enter' && !e.shiftKey) {
             e.preventDefault();
-            document.querySelector('.send-button').click();
+            document.getElementById('send').click();
           }
         });
         
         // Auto-resize textarea
         function autoResize(textarea) {
           textarea.style.height = 'auto';
-          textarea.style.height = Math.min(textarea.scrollHeight, 120) + 'px';
+          textarea.style.height = Math.min(textarea.scrollHeight, 200) + 'px';
         }
         
         document.addEventListener('input', (e) => {
-          if (e.target.classList.contains('message-input')) {
+          if (e.target.id === 'prompt') {
             autoResize(e.target);
           }
         });
