@@ -644,8 +644,7 @@ app_ui = ui.page_fluid(
                 ui.div({"class": "kb-header"}, "📚 Base de Conhecimento"),
                 ui.div(
                     {"class": "file-input-wrapper"},
-                    ui.input_file("docs", "", multiple=True, accept=[".pdf"], 
-                                  class_="file-input"),
+                    ui.input_file("docs", "", multiple=True, accept=[".pdf"]),
                     ui.tags.label(
                         {"class": "file-input-label", "for": "docs"},
                         "📄 Adicionar PDFs"
@@ -669,8 +668,7 @@ app_ui = ui.page_fluid(
                 ui.div(
                     {"class": "textarea-wrapper"},
                     ui.input_text_area("prompt", None, rows=1,
-                                       placeholder="Digite sua mensagem...",
-                                       class_="message-input")
+                                       placeholder="Digite sua mensagem...")
                 ),
                 ui.input_action_button("send", "Enviar", class_="send-button")
             ),
@@ -679,7 +677,7 @@ app_ui = ui.page_fluid(
                 ui.input_select("model", None, {
                     "claude-3-haiku-20240307": "Claude 3 Haiku",
                     "claude-3-5-sonnet-20240620": "Claude 3.5 Sonnet"
-                }, selected="claude-3-haiku-20240307", class_="model-select"),
+                }, selected="claude-3-haiku-20240307"),
                 ui.input_action_button("clear", "Limpar", class_="clear-button")
             )
         )
