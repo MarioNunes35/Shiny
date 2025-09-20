@@ -375,6 +375,9 @@ html, body {
 .chat-container {
   margin: 24px 0 180px;
   min-height: 400px;
+  max-height: calc(100vh - 300px);
+  overflow-y: auto;
+  scroll-behavior: smooth;
 }
 
 .message {
@@ -633,6 +636,19 @@ app_ui = ui.page_fluid(
         document.documentElement.setAttribute('data-theme', theme);
         try { localStorage.setItem('osa-theme', theme); } catch(e){}
       });
+      
+      Shiny.addCustomMessageHandler('scroll_to_bottom', () => {
+        setTimeout(() => {
+          const container = document.querySelector('.chat-container');
+          if (container) {
+            container.scrollTo({
+              top: container.scrollHeight,
+              behavior: 'smooth'
+            });
+          }
+        }, 100);
+      });
+      
       (function(){
         let saved = 'dark';
         try {
@@ -717,8 +733,10 @@ def server(input, output, session):
     history = reactive.Value([])
     typing = reactive.Value(False)
 
-    def push(role, content):
+    async def push(role, content):
         history.set(history() + [{"role": role, "content": content}])
+        # Envia comando para fazer scroll automático
+        await session.send_custom_message("scroll_to_bottom", {})
 
     @render.ui
     def status_badge():
@@ -796,13 +814,56 @@ def server(input, output, session):
 
     # Auto-scroll script
     ui.tags.script("""
-        // Auto-scroll chat
-        new MutationObserver(() => {
-          const container = document.querySelector('.chat-container');
-          if (container) {
-            container.scrollTop = container.scrollHeight;
-          }
-        }).observe(document.body, {childList: true, subtree: true});
+        // Função para scroll automático
+        function scrollToBottom() {
+            const container = document.querySelector('.chat-container');
+            if (container) {
+                container.scrollTo({
+                    top: container.scrollHeight,
+                    behavior: 'smooth'
+                });
+            }
+        }
+        
+        // Observer para detectar mudanças no chat
+        function setupChatObserver() {
+            const chatContainer = document.querySelector('.chat-container');
+            if (chatContainer) {
+                const observer = new MutationObserver((mutations) => {
+                    let shouldScroll = false;
+                    mutations.forEach((mutation) => {
+                        if (mutation.addedNodes.length > 0) {
+                            shouldScroll = true;
+                        }
+                    });
+                    if (shouldScroll) {
+                        setTimeout(scrollToBottom, 100);
+                    }
+                });
+                
+                observer.observe(chatContainer, {
+                    childList: true,
+                    subtree: true
+                });
+            }
+        }
+        
+        // Inicializar quando a página carregar
+        document.addEventListener('DOMContentLoaded', function() {
+            setupChatObserver();
+            setTimeout(scrollToBottom, 500);
+        });
+        
+        // Também tentar configurar após um delay (caso o DOM ainda não esteja pronto)
+        setTimeout(function() {
+            setupChatObserver();
+            scrollToBottom();
+        }, 1000);
+        
+        // Auto-scroll manual após mudanças no Shiny
+        $(document).on('shiny:value', function(event) {
+            setTimeout(scrollToBottom, 200);
+        });
         
         // Enter to send (Shift+Enter for new line)
         document.addEventListener('keydown', (e) => {
@@ -844,21 +905,21 @@ def server(input, output, session):
 
     @reactive.Effect
     @reactive.event(input.send)
-    def _send():
+    async def _send():
         q = (input.prompt() or "").strip()
         if not q:
             ui.notification_show("Digite sua mensagem.", type="warning")
             return
-        push("user", q)
+        await push("user", q)
         ui.update_text_area("prompt", value="")
         if client is None:
-            push("assistant", "Claude indisponível. Verifique ANTHROPIC_API_KEY e o pacote 'anthropic'.")
+            await push("assistant", "Claude indisponível. Verifique ANTHROPIC_API_KEY e o pacote 'anthropic'.")
             return
         typing.set(True)
         model = (input.model() or "claude-3-haiku-20240307")
         reply = chat_reply_with_context(history(), model)
         typing.set(False)
-        push("assistant", reply)
+        await push("assistant", reply)
 
 app = App(app_ui, server)
 
