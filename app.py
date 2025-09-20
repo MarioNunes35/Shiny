@@ -373,7 +373,7 @@ html, body {
 }
 
 .chat-container {
-  margin: 24px 0 140px;
+  margin: 24px 0 180px;
   min-height: 400px;
 }
 
@@ -475,8 +475,9 @@ html, body {
   right: 0;
   background: var(--surface);
   border-top: 1px solid var(--border);
-  padding: 16px 24px;
+  padding: 20px 24px 24px;
   backdrop-filter: blur(10px);
+  box-shadow: 0 -4px 12px rgba(0, 0, 0, 0.05);
 }
 
 .input-container {
@@ -486,9 +487,9 @@ html, body {
 
 .input-row {
   display: flex;
-  gap: 12px;
+  gap: 16px;
   align-items: flex-end;
-  margin-bottom: 12px;
+  margin-bottom: 16px;
 }
 
 .textarea-wrapper {
