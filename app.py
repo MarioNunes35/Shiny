@@ -1,4 +1,4 @@
-# app.py — Chat UI + Light/Dark + PDF RAG cache (TF-IDF) — fixed for Shiny 1.4 (await send_custom_message)
+# app.py — Chat UI + Light/Dark + PDF RAG cache (TF-IDF) — Design minimalista Claude
 from shiny import App, ui, render, reactive
 from dotenv import load_dotenv
 import os, traceback, re, json, hashlib
@@ -151,7 +151,7 @@ def anthropic_messages_from_history(history):
 def chat_reply_with_context(history, model):
     if client is None:
         return "Configuração necessária: defina ANTHROPIC_API_KEY e instale 'anthropic'."
-    # última pergunta do usuário
+    # Última pergunta do usuário
     question = next((m["content"] for m in reversed(history) if m["role"]=="user"), "")
     ctx, cites = build_context(question) if HAVE_RAG_DEPS else ("", "")
 
@@ -176,38 +176,424 @@ def chat_reply_with_context(history, model):
         answer += "\n\n---\n**Fontes:**\n" + cites
     return answer
 
-# ----------------- CSS (Light/Dark via data-theme) -----------------
+# ----------------- CSS Minimalista - Cores do Claude -----------------
 CSS = """
-:root{
-  --bg:#f8fafc; --panel:#ffffff; --bubble-user:#f3f4f6; --bubble-assistant:#eef2ff;
-  --border:#e5e7eb; --text:#0f172a; --muted:#475569; --accent:#7c3aed;
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap');
+
+:root {
+  --bg: #f8fafc;
+  --surface: #ffffff;
+  --border: #e5e7eb;
+  --text-primary: #1f2937;
+  --text-secondary: #6b7280;
+  --text-muted: #9ca3af;
+  --orange: #ff7849;
+  --orange-hover: #ff6332;
+  --orange-light: #fff5f2;
+  --gray-50: #f9fafb;
+  --gray-100: #f3f4f6;
+  --gray-900: #111827;
+  --shadow-sm: 0 1px 2px 0 rgb(0 0 0 / 0.05);
+  --shadow-md: 0 4px 6px -1px rgb(0 0 0 / 0.1);
 }
-[data-theme='dark']{
-  --bg:#0b1220; --panel:#0f172a; --bubble-user:#111827; --bubble-assistant:#0b1320;
-  --border:#1f2937; --text:#e5e7eb; --muted:#9ca3af; --accent:#8b5cf6;
+
+[data-theme='dark'] {
+  --bg: #0f1419;
+  --surface: #1a1f2e;
+  --border: #2d3748;
+  --text-primary: #e2e8f0;
+  --text-secondary: #a0aec0;
+  --text-muted: #718096;
+  --gray-50: #1a202c;
+  --gray-100: #2d3748;
+  --gray-900: #f7fafc;
+  --shadow-sm: 0 1px 2px 0 rgb(0 0 0 / 0.3);
+  --shadow-md: 0 4px 6px -1px rgb(0 0 0 / 0.4);
 }
-html,body{height:100%}
-body{background:linear-gradient(180deg,var(--bg),var(--panel) 55%,var(--bg));color:var(--text);}
-a{color:var(--accent)}
-.header{max-width:980px;margin:18px auto 0;padding:8px 16px;display:flex;align-items:center;gap:8px;justify-content:space-between}
-.header .left h3{font-weight:700;margin:0}
-.header .sub{color:var(--muted);margin:2px 0 0 0}
-.header .right{display:flex;gap:8px;align-items:center}
-.badge{font-size:.9rem;color:var(--muted)}
-.kb{max-width:980px;margin:10px auto;padding:0 16px}
-.chat-container{max-width:980px;margin:0 auto;padding:8px 16px 120px}
-.message{display:flex;gap:12px;padding:14px 16px;border-radius:16px;margin:10px 0;border:1px solid var(--border);background:var(--bubble-assistant)}
-.message.user{background:var(--bubble-user)}
-.avatar{width:32px;height:32px;border-radius:8px;background:var(--accent);display:flex;align-items:center;justify-content:center;font-weight:700;color:white;flex-shrink:0}
-.role{font-weight:600;margin-bottom:4px;color:var(--muted)}
-.content{white-space:pre-wrap;line-height:1.5}
-.panel-bottom{backdrop-filter:blur(10px); background:color-mix(in oklab, var(--bg) 70%, var(--panel)); border-top:1px solid var(--border); padding:12px}
-.composer{max-width:980px;margin:0 auto;display:flex;gap:10px;align-items:flex-end}
-.composer .left{flex:1}
-textarea.form-control{background:var(--panel);color:var(--text);border:1px solid var(--border);}
-select.form-select{background:var(--panel);color:var(--text);border:1px solid var(--border);}
-.btn-primary{background:var(--accent);border-color:var(--accent)}
-.badge-ok{color:#10b981}.badge-warn{color:#f59e0b}.badge-err{color:#ef4444}
+
+* {
+  box-sizing: border-box;
+}
+
+html, body {
+  height: 100%;
+  margin: 0;
+  padding: 0;
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+  background: var(--bg);
+  color: var(--text-primary);
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+.header {
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  padding: 16px 24px;
+  position: sticky;
+  top: 0;
+  z-index: 10;
+}
+
+.header-content {
+  max-width: 800px;
+  margin: 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.header h1 {
+  font-size: 18px;
+  font-weight: 600;
+  margin: 0;
+  color: var(--text-primary);
+}
+
+.header-controls {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.status-badge {
+  font-size: 12px;
+  padding: 4px 8px;
+  border-radius: 6px;
+  font-weight: 500;
+}
+
+.status-ok {
+  background: #dcfce7;
+  color: #16a34a;
+}
+
+.status-warn {
+  background: #fef3c7;
+  color: #d97706;
+}
+
+.status-error {
+  background: #fee2e2;
+  color: #dc2626;
+}
+
+[data-theme='dark'] .status-ok {
+  background: #064e3b;
+  color: #34d399;
+}
+
+[data-theme='dark'] .status-warn {
+  background: #451a03;
+  color: #fbbf24;
+}
+
+[data-theme='dark'] .status-error {
+  background: #450a0a;
+  color: #f87171;
+}
+
+.main-content {
+  max-width: 800px;
+  margin: 0 auto;
+  padding: 0 24px;
+}
+
+.kb-section {
+  margin: 24px 0;
+}
+
+.kb-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 20px;
+  box-shadow: var(--shadow-sm);
+}
+
+.kb-header {
+  font-weight: 600;
+  margin-bottom: 16px;
+  color: var(--text-primary);
+}
+
+.file-input-wrapper {
+  position: relative;
+  display: inline-block;
+}
+
+.file-input {
+  position: absolute;
+  opacity: 0;
+  width: 100%;
+  height: 100%;
+  cursor: pointer;
+}
+
+.file-input-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 16px;
+  background: var(--gray-50);
+  border: 1px dashed var(--border);
+  border-radius: 8px;
+  cursor: pointer;
+  transition: all 0.2s;
+  color: var(--text-secondary);
+  font-size: 14px;
+}
+
+.file-input-label:hover {
+  background: var(--gray-100);
+  border-color: var(--orange);
+}
+
+.kb-status {
+  margin-top: 12px;
+  font-size: 13px;
+  color: var(--text-muted);
+}
+
+.chat-container {
+  margin: 24px 0 140px;
+  min-height: 400px;
+}
+
+.message {
+  display: flex;
+  gap: 12px;
+  margin-bottom: 24px;
+  align-items: flex-start;
+}
+
+.message.user {
+  flex-direction: row-reverse;
+}
+
+.avatar {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 600;
+  font-size: 12px;
+  flex-shrink: 0;
+}
+
+.avatar.assistant {
+  background: var(--orange);
+  color: white;
+}
+
+.avatar.user {
+  background: var(--gray-100);
+  color: var(--text-secondary);
+}
+
+.message-content {
+  max-width: 70%;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  padding: 16px;
+  box-shadow: var(--shadow-sm);
+}
+
+.message.user .message-content {
+  background: var(--orange-light);
+  border-color: transparent;
+}
+
+[data-theme='dark'] .message.user .message-content {
+  background: #2d1b14;
+}
+
+.role-label {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-muted);
+  margin-bottom: 8px;
+}
+
+.message-text {
+  color: var(--text-primary);
+  line-height: 1.6;
+}
+
+.typing-indicator {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+  color: var(--text-muted);
+}
+
+.typing-dots {
+  display: flex;
+  gap: 2px;
+}
+
+.typing-dot {
+  width: 4px;
+  height: 4px;
+  background: var(--text-muted);
+  border-radius: 50%;
+  animation: typing 1.4s infinite ease-in-out;
+}
+
+.typing-dot:nth-child(2) { animation-delay: 0.2s; }
+.typing-dot:nth-child(3) { animation-delay: 0.4s; }
+
+@keyframes typing {
+  0%, 80%, 100% { opacity: 0.3; }
+  40% { opacity: 1; }
+}
+
+.input-panel {
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  background: var(--surface);
+  border-top: 1px solid var(--border);
+  padding: 16px 24px;
+  backdrop-filter: blur(10px);
+}
+
+.input-container {
+  max-width: 800px;
+  margin: 0 auto;
+}
+
+.input-row {
+  display: flex;
+  gap: 12px;
+  align-items: flex-end;
+  margin-bottom: 12px;
+}
+
+.textarea-wrapper {
+  flex: 1;
+  position: relative;
+}
+
+.message-input {
+  width: 100%;
+  min-height: 44px;
+  max-height: 120px;
+  padding: 12px 16px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--bg);
+  color: var(--text-primary);
+  font-family: inherit;
+  font-size: 14px;
+  resize: none;
+  outline: none;
+  transition: border-color 0.2s;
+}
+
+.message-input:focus {
+  border-color: var(--orange);
+}
+
+.message-input::placeholder {
+  color: var(--text-muted);
+}
+
+.send-button {
+  background: var(--orange);
+  color: white;
+  border: none;
+  border-radius: 12px;
+  padding: 12px 20px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background-color 0.2s;
+  min-width: 80px;
+}
+
+.send-button:hover:not(:disabled) {
+  background: var(--orange-hover);
+}
+
+.send-button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.controls-row {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+}
+
+.model-select {
+  flex: 1;
+  padding: 8px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg);
+  color: var(--text-primary);
+  font-size: 13px;
+  outline: none;
+}
+
+.model-select:focus {
+  border-color: var(--orange);
+}
+
+.theme-select {
+  padding: 6px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg);
+  color: var(--text-primary);
+  font-size: 13px;
+  outline: none;
+}
+
+.clear-button {
+  background: transparent;
+  color: var(--text-secondary);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px 16px;
+  font-size: 13px;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.clear-button:hover {
+  background: var(--gray-50);
+  color: var(--text-primary);
+}
+
+/* Hide default Shiny styling */
+.shiny-input-container label,
+.form-group label {
+  display: none;
+}
+
+.form-control, .form-select {
+  border: 1px solid var(--border) !important;
+  background: var(--bg) !important;
+  color: var(--text-primary) !important;
+}
+
+.card {
+  background: transparent !important;
+  border: none !important;
+}
+
+.card-header {
+  background: transparent !important;
+  border: none !important;
+  padding: 0 !important;
+  margin-bottom: 16px !important;
+}
 """
 
 # ------------------ UI ------------------
@@ -229,46 +615,74 @@ app_ui = ui.page_fluid(
         Shiny.setInputValue('theme', saved, {priority:'event'});
       })();
     """),
+    
+    # Header
     ui.div(
-        {"class":"header"},
-        ui.div({"class":"left"},
-               ui.h3("🚀 Origin Software Assistant"),
-               ui.p({"class":"sub"}, "Chat + RAG de PDFs (cache local) • Claude via ANTHROPIC_API_KEY")),
-        ui.div({"class":"right"},
-               ui.input_select("theme", None,
-                               {"dark":"🌙 Escuro","light":"☀️ Claro"},
-                               selected="dark"),
-               ui.tags.span({"class":"badge"}, ui.output_text("status", inline=True)),
-        ),
-    ),
-    ui.div({"class":"kb"},
-        ui.card(
-            ui.card_header("📚 Base de conhecimento (PDF → índice TF-IDF)"),
-            ui.input_file("docs", "Adicionar PDF(s)", multiple=True, accept=[".pdf"]),
-            ui.output_text("kb_status")
+        {"class": "header"},
+        ui.div(
+            {"class": "header-content"},
+            ui.h1("Origin Assistant"),
+            ui.div(
+                {"class": "header-controls"},
+                ui.output_ui("status_badge"),
+                ui.input_select("theme", None,
+                               {"dark": "🌙", "light": "☀️"},
+                               selected="dark")
+            )
         )
     ),
-    ui.div({"class":"chat-container"}, ui.output_ui("chat_thread")),
-    ui.panel_fixed(
-        ui.div({"class":"panel-bottom", "style":"padding:0"},
-            ui.div({"class":"composer"},
-                ui.div({"class":"left"},
-                    ui.input_text_area("prompt", None, rows=3,
-                                       placeholder="Envie uma mensagem… (Shift+Enter = quebra de linha)"),
-                    ui.row(
-                        ui.column(8,
-                            ui.input_select("model", None, {
-                                "claude-3-haiku-20240307":"Claude 3 Haiku (econômico)",
-                                "claude-3-5-sonnet-20240620":"Claude 3.5 Sonnet (qualidade)"
-                            }, selected="claude-3-haiku-20240307")
-                        ),
-                        ui.column(4, ui.input_action_button("clear","Limpar"))
-                    ),
+    
+    # Main content
+    ui.div(
+        {"class": "main-content"},
+        
+        # Knowledge base section
+        ui.div(
+            {"class": "kb-section"},
+            ui.div(
+                {"class": "kb-card"},
+                ui.div({"class": "kb-header"}, "📚 Base de Conhecimento"),
+                ui.div(
+                    {"class": "file-input-wrapper"},
+                    ui.input_file("docs", "", multiple=True, accept=[".pdf"], 
+                                  class_="file-input"),
+                    ui.tags.label(
+                        {"class": "file-input-label", "for": "docs"},
+                        "📄 Adicionar PDFs"
+                    )
                 ),
-                ui.input_action_button("send","Enviar", class_="btn btn-primary"),
+                ui.div({"class": "kb-status"}, ui.output_text("kb_status"))
             )
         ),
-        left="0", right="0", bottom="0"
+        
+        # Chat area
+        ui.div({"class": "chat-container"}, ui.output_ui("chat_thread"))
+    ),
+    
+    # Input panel
+    ui.div(
+        {"class": "input-panel"},
+        ui.div(
+            {"class": "input-container"},
+            ui.div(
+                {"class": "input-row"},
+                ui.div(
+                    {"class": "textarea-wrapper"},
+                    ui.input_text_area("prompt", None, rows=1,
+                                       placeholder="Digite sua mensagem...",
+                                       class_="message-input")
+                ),
+                ui.input_action_button("send", "Enviar", class_="send-button")
+            ),
+            ui.div(
+                {"class": "controls-row"},
+                ui.input_select("model", None, {
+                    "claude-3-haiku-20240307": "Claude 3 Haiku",
+                    "claude-3-5-sonnet-20240620": "Claude 3.5 Sonnet"
+                }, selected="claude-3-haiku-20240307", class_="model-select"),
+                ui.input_action_button("clear", "Limpar", class_="clear-button")
+            )
+        )
     )
 )
 
@@ -280,14 +694,14 @@ def server(input, output, session):
     def push(role, content):
         history.set(history() + [{"role": role, "content": content}])
 
-    @render.text
-    def status():
+    @render.ui
+    def status_badge():
         if HAS_KEY and client is not None:
-            return "✅ Chave detectada"
+            return ui.span({"class": "status-badge status-ok"}, "✓ Conectado")
         elif HAS_KEY and client is None and Anthropic is None:
-            return "⚠️ Falta instalar 'anthropic'"
+            return ui.span({"class": "status-badge status-warn"}, "⚠ Instalar 'anthropic'")
         else:
-            return "❌ Sem chave"
+            return ui.span({"class": "status-badge status-error"}, "✗ Sem chave")
 
     @render.text
     def kb_status():
@@ -296,30 +710,49 @@ def server(input, output, session):
         chunks, _, _ = load_index()
         n_docs = len({c["source"] for c in chunks}) if chunks else 0
         n_chunks = len(chunks)
-        return f"📄 {n_docs} PDF(s) • 🧩 {n_chunks} chunk(s)"
+        return f"{n_docs} PDF(s) • {n_chunks} chunk(s) indexados"
 
     @render.ui
     def chat_thread():
         items = []
         for m in history():
-            cls = "assistant" if m["role"] == "assistant" else "user"
-            avatar = "OA" if m["role"] == "assistant" else "Você"
+            is_user = m["role"] == "user"
             items.append(
                 ui.div(
-                    {"class": f"message {cls}"},
-                    ui.div({"class":"avatar"}, avatar[0]),
+                    {"class": f"message {'user' if is_user else 'assistant'}"},
                     ui.div(
-                        ui.div({"class":"role"}, "Origin Assistant" if m["role"]=="assistant" else "Você"),
-                        ui.div({"class":"content"}, ui.markdown(m["content"])),
+                        {"class": f"avatar {'user' if is_user else 'assistant'}"},
+                        "U" if is_user else "OA"
+                    ),
+                    ui.div(
+                        {"class": "message-content"},
+                        ui.div({"class": "role-label"}, 
+                               "Você" if is_user else "Origin Assistant"),
+                        ui.div({"class": "message-text"}, ui.markdown(m["content"]))
                     )
                 )
             )
+        
         if typing():
             items.append(
-                ui.div({"class":"message assistant"},
-                       ui.div({"class":"avatar"}, "OA"),
-                       ui.div(ui.div({"class":"role"},"Origin Assistant"),
-                              ui.div({"class":"content"},"Digitando… ⏳")))
+                ui.div(
+                    {"class": "message assistant"},
+                    ui.div({"class": "avatar assistant"}, "OA"),
+                    ui.div(
+                        {"class": "message-content"},
+                        ui.div({"class": "role-label"}, "Origin Assistant"),
+                        ui.div(
+                            {"class": "typing-indicator"},
+                            "Digitando",
+                            ui.div(
+                                {"class": "typing-dots"},
+                                ui.div({"class": "typing-dot"}),
+                                ui.div({"class": "typing-dot"}),
+                                ui.div({"class": "typing-dot"})
+                            )
+                        )
+                    )
+                )
             )
         return ui.TagList(*items)
 
@@ -329,24 +762,41 @@ def server(input, output, session):
         history.set([])
         ui.update_text_area("prompt", value="")
 
-    # Apply theme when selection changes (Shiny 1.4: await coroutine)
+    # Apply theme when selection changes
     @reactive.Effect
     async def _theme_apply():
         theme = input.theme() or "dark"
         await session.send_custom_message("set_theme", theme)
 
-    # Key handler + autoscroll
+    # Auto-scroll script
     ui.tags.script("""
-        document.addEventListener('keydown', (e)=>{
-          if(e.target.id==='prompt' && e.key==='Enter' && !e.shiftKey){
+        // Auto-scroll chat
+        new MutationObserver(() => {
+          const container = document.querySelector('.chat-container');
+          if (container) {
+            container.scrollTop = container.scrollHeight;
+          }
+        }).observe(document.body, {childList: true, subtree: true});
+        
+        // Enter to send (Shift+Enter for new line)
+        document.addEventListener('keydown', (e) => {
+          if (e.target.classList.contains('message-input') && e.key === 'Enter' && !e.shiftKey) {
             e.preventDefault();
-            document.getElementById('send').click();
+            document.querySelector('.send-button').click();
           }
         });
-        new MutationObserver(()=>{
-          const el=document.querySelector('.chat-container');
-          if(el) el.scrollTop = el.scrollHeight;
-        }).observe(document.body,{childList:true,subtree:true});
+        
+        // Auto-resize textarea
+        function autoResize(textarea) {
+          textarea.style.height = 'auto';
+          textarea.style.height = Math.min(textarea.scrollHeight, 120) + 'px';
+        }
+        
+        document.addEventListener('input', (e) => {
+          if (e.target.classList.contains('message-input')) {
+            autoResize(e.target);
+          }
+        });
     """)
 
     @reactive.Effect
